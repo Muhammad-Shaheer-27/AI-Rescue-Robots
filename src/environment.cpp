@@ -118,7 +118,7 @@ bool Environment::addRoad(int id,int fromID,int toID,int cost,int status){
 
     Location *from=findLocation(fromID);
     Location *to=findLocation(toID);
-    if(from==nullptr || to==nullptr || fromID=toID){
+    if(from==nullptr || to==nullptr || fromID==toID){
         return false;
     }
 
