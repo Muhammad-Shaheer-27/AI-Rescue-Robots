@@ -164,7 +164,7 @@ ScenarioLoader::ScenarioLoader(){
     parameters.batteryPerWorkStep=0;
     parameters.rechargePerStep=0;
 }
-bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environment){
+bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environment, RobotList &robots, RequestList &requests){
     ifstream file(filename);
     if(!file.is_open()){
         cout<<"Error! Could not open scenario file"<<endl;
@@ -434,6 +434,21 @@ bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environme
             file.close();
             return false;
         }
+
+        int id, loc, maxBat, initBat;
+        if (!parseInteger(tokens[0], id) || !parseInteger(tokens[1], loc) ||
+            !parseInteger(tokens[3], maxBat) || !parseInteger(tokens[4], initBat)) {
+            cout << "Error! Invalid numeric value in robot record" << endl;
+            file.close();
+            return false;
+        }
+        int cap = parseCapability(tokens[2]); 
+        
+        if (!robots.addRobot(id, loc, cap, maxBat, initBat)) {
+            cout << "Error! Could not add robot " << id << endl;
+            file.close();
+            return false;
+        }
     }
 
     //Read REQUEST Section
@@ -453,6 +468,22 @@ bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environme
         tokenCount=splitTokens(line,tokens,8);
         if (tokenCount != 6) {
             cout << "Error! Invalid request record"<<endl;
+            file.close();
+            return false;
+        }
+
+        int id, time, loc, urg, dur;
+        if (!parseInteger(tokens[0], id) || !parseInteger(tokens[1], time) ||
+            !parseInteger(tokens[2], loc) || !parseInteger(tokens[4], urg) ||
+            !parseInteger(tokens[5], dur)) {
+            cout << "Error! Invalid numeric value in request record" << endl;
+            file.close();
+            return false;
+        }
+        int cat = parseRequestCategory(tokens[3]);
+
+        if (!requests.addRequestPriority(id, time, loc, cat, urg, dur)) {
+            cout << "Error! Could not add request " << id << endl;
             file.close();
             return false;
         }

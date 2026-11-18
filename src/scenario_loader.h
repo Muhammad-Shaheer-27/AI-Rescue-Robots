@@ -1,6 +1,8 @@
 #ifndef SCENARIO_LOADER_H
 #define SCENARIO_LOADER_H
 #include "environment.h"
+#include "robot.h"
+#include "rescue_request.h"
 
 struct SimulationParameters{
     int maxSteps;
@@ -16,7 +18,7 @@ private:
 public:
     ScenarioLoader();
 
-    bool loadEnvironment(const char *filename,Environment &environment);
+    bool loadEnvironment(const char *filename,Environment &environment, RobotList &robots, RequestList &requests);
 
     const char *getScenarioName() const;
     const SimulationParameters& getParameters() const;
