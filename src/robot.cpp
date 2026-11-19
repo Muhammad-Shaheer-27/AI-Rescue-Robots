@@ -163,16 +163,13 @@ bool Robot::hasEnoughBattery(int requiredBattery) const {
 }
 
 bool Robot::consumeBattery(int amount) {
-    if (amount < 0) {
+    if (amount < 0 || amount > currentBattery) {
         return false;
     }
-    if (amount > currentBattery) {
-        totalBatteryConsumed += currentBattery;
-        currentBattery = 0;
-    } else {
-        currentBattery -= amount;
-        totalBatteryConsumed += amount;
-    }
+
+    currentBattery -= amount;
+    totalBatteryConsumed += amount;
+
     return true;
 }
 

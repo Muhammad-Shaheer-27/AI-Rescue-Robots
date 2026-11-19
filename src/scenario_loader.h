@@ -11,17 +11,30 @@ struct SimulationParameters{
     int batteryPerWorkStep;
     int rechargePerStep;
 };
+struct ScheduledEvent{
+    int time;
+    int type;
+    int targetID;
+    int value;
+};
 class ScenarioLoader{
 private:
     char scenarioName[50];
     SimulationParameters parameters;
+
+    ScheduledEvent *events;
+    int eventCount;
 public:
     ScenarioLoader();
+    ~ScenarioLoader();
 
     bool loadEnvironment(const char *filename,Environment &environment, RobotList &robots, RequestList &requests);
 
     const char *getScenarioName() const;
     const SimulationParameters& getParameters() const;
+
+    const ScheduledEvent *getEvents() const;
+    int getEventCount() const;
 };
 
 #endif

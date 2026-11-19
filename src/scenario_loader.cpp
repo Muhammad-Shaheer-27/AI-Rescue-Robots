@@ -154,7 +154,33 @@ bool readSectionHeader(ifstream &file,const char *expectedName,int &count){
     }
     return true;
 }
-
+//------------------------------------------------------------
+// Helper Function to determine Event Type
+//------------------------------------------------------------
+int getEventType(const char *type){
+    if(sameText(type,"BLOCK")){
+        return EVENT_BLOCK;
+    }
+    if(sameText(type,"UNBLOCK")){
+        return EVENT_UNBLOCK;
+    }
+    if(sameText(type,"STATION_DOWN")){
+        return EVENT_STATION_DOWN;
+    }
+    if(sameText(type,"STATION_UP")){
+        return EVENT_STATION_UP;
+    }
+    if(sameText(type,"SET_URGENCY")){
+        return EVENT_SET_URGENCY;
+    }
+    if(sameText(type,"ROBOT_OFFLINE")){
+        return EVENT_ROBOT_OFFLINE;
+    }
+    if(sameText(type,"ROBOT_ONLINE")){
+        return EVENT_ROBOT_ONLINE;
+    }
+    return 0;
+}
 ScenarioLoader::ScenarioLoader(){
     scenarioName[0]='\0';
 
@@ -163,6 +189,12 @@ ScenarioLoader::ScenarioLoader(){
     parameters.batteryPerCostUnit=0;
     parameters.batteryPerWorkStep=0;
     parameters.rechargePerStep=0;
+
+    events=nullptr;
+    eventCount=0;
+}
+ScenarioLoader::~ScenarioLoader(){
+    delete [] events;
 }
 bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environment, RobotList &robots, RequestList &requests){
     ifstream file(filename);
@@ -434,17 +466,24 @@ bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environme
             file.close();
             return false;
         }
-
-        int id, loc, maxBat, initBat;
-        if (!parseInteger(tokens[0], id) || !parseInteger(tokens[1], loc) ||
-            !parseInteger(tokens[3], maxBat) || !parseInteger(tokens[4], initBat)) {
+        //Check valid robot parameters
+        int id, location, maxBattery, initialBattery;
+        if (!parseInteger(tokens[0], id) || !parseInteger(tokens[1], location) ||
+            !parseInteger(tokens[3], maxBattery) || !parseInteger(tokens[4], initialBattery)) {
             cout << "Error! Invalid numeric value in robot record" << endl;
             file.close();
             return false;
         }
-        int cap = parseCapability(tokens[2]); 
+        //Validate starting location
+        if (environment.getLocation(location) == nullptr) {
+            cout<< "Error! Robot "<<id<< " has an invalid starting location." << endl;
+            file.close();
+            return false;
+        }
+        //Add robots into the robot class
+        int capability = parseCapability(tokens[2]); 
         
-        if (!robots.addRobot(id, loc, cap, maxBat, initBat)) {
+        if (!robots.addRobot(id, location, capability, maxBattery, initialBattery)) {
             cout << "Error! Could not add robot " << id << endl;
             file.close();
             return false;
@@ -471,18 +510,25 @@ bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environme
             file.close();
             return false;
         }
-
-        int id, time, loc, urg, dur;
+        //Check valid requests
+        int id, time, location, urgency, duration;
         if (!parseInteger(tokens[0], id) || !parseInteger(tokens[1], time) ||
-            !parseInteger(tokens[2], loc) || !parseInteger(tokens[4], urg) ||
-            !parseInteger(tokens[5], dur)) {
+            !parseInteger(tokens[2], location) || !parseInteger(tokens[4], urgency) ||
+            !parseInteger(tokens[5], duration)) {
             cout << "Error! Invalid numeric value in request record" << endl;
             file.close();
             return false;
         }
-        int cat = parseRequestCategory(tokens[3]);
+        //Validate starting location
+        if (environment.getLocation(location) == nullptr) {
+            cout << "Error! Request "<<id<<" has an invalid location." << endl;
+            file.close();
+            return false;
+        }
+        //Add request to the queue
+        int category = parseRequestCategory(tokens[3]);
 
-        if (!requests.addRequestPriority(id, time, loc, cat, urg, dur)) {
+        if (!requests.addRequestPriority(id, time, location, category, urgency, duration)) {
             cout << "Error! Could not add request " << id << endl;
             file.close();
             return false;
@@ -490,25 +536,111 @@ bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environme
     }
 
     //Read EVENTS section
-    int eventCount;
-    if (!readSectionHeader(file, "EVENTS", eventCount)) {
-        cout << "Error! Invalid EVENTS section."<<endl;
+    int declaredEventCount;
+    if(!readSectionHeader(file,"EVENTS",declaredEventCount)){
+        cout<<"Error! Invalid Events section"<<endl;
         file.close();
         return false;
     }
-    for (int i = 0; i < eventCount; i++){
-        if (!readNextLine(file, line, 512)) {
-            cout << "Error! Missing event records"<<endl;
-            file.close();
-            return false;
-        }
-        tokenCount = splitTokens(line, tokens, 8);
-        if (tokenCount < 3 || tokenCount > 4) {
-            cout << "Error! Invalid event record"<<endl;
-            file.close();
-            return false;
-        }
+    //Allocate memory for the declared number of events
+    if(declaredEventCount>0){
+        events=new ScheduledEvent[declaredEventCount];
     }
+    eventCount=0;
+    //Read each event
+    for(int i=0;i<declaredEventCount;i++){
+        if(!readNextLine(file,line,512)){
+            cout<<"Error! Missing Event records"<<endl;
+            file.close();
+            return false;
+        }
+        
+        tokenCount=splitTokens(line,tokens,8);
+        if(tokenCount<3 || tokenCount>4){
+            cout<<"Error! Invalid Events record"<<endl;
+            file.close();
+            return false;
+        }
+        //Read Event time
+        int time;
+        if(!parseInteger(tokens[0],time) || time<0){
+            cout<<"Error! Invalid event time"<<endl;
+            file.close();
+            return false;
+        }
+        //Convert event name into an integer
+        int type=getEventType(tokens[1]);
+        if(type==0){
+            cout<<"Error! Unknown event type"<<endl;
+            file.close();
+            return false;
+        }
+        //SET_URGENCY requires 4 tokens so we check that
+        if(type==EVENT_SET_URGENCY && tokenCount!=4){
+            cout<<"Error! SET_URGENCY requires a new urgency value"<<endl;
+            file.close();
+            return false;
+        }
+        if(type!=EVENT_SET_URGENCY && tokenCount!=3){
+            cout<<"Error! Unexpected extra value in event record"<<endl;
+            file.close();
+            return false;
+        }
+
+        //Read Target id
+        int targetID;
+        if(!parseInteger(tokens[2],targetID) || targetID<=0){
+            cout<<"Error! Invalid event targetID"<<endl;
+            file.close();
+            return false;
+        }
+        //Default value for events which do not need an extra value
+        int eventValue=0;
+        if(type==EVENT_SET_URGENCY){
+            if(!parseInteger(tokens[3],eventValue) || eventValue<1 || eventValue>5){
+                cout<<"Error! Invalid urgency in event"<<endl;
+                file.close();
+                return false;
+            }
+        }
+        //Validate the target according to the event type
+        if(type==EVENT_BLOCK || type==EVENT_UNBLOCK){
+            if(environment.getRoad(targetID)==nullptr){
+                cout<<"Error! Event refers to an unknown road: "<<targetID<<endl;
+                file.close();
+                return false;
+            }
+        }
+        else if(type==EVENT_STATION_DOWN || type==EVENT_STATION_UP){
+            if(environment.getLocation(targetID)==nullptr){
+                cout<<"Error! Event refers to an unknown location: "<<targetID<<endl;
+                file.close();
+                return false;
+            }
+        }
+        else if(type == EVENT_ROBOT_OFFLINE || type == EVENT_ROBOT_ONLINE) {
+            if (robots.findRobot(targetID) == nullptr) {
+                cout << "Error! Event refers to an unknown robot: "<< targetID << endl;
+                file.close();
+                return false;
+            }
+        }
+
+        else if(type == EVENT_SET_URGENCY){
+            if (requests.findRequest(targetID) == nullptr) {
+                cout << "Error! Event refers to an unknown request: "<< targetID << endl;
+                file.close();
+                return false;
+            }
+        }
+        //Store the validate event
+        events[eventCount].time=time;
+        events[eventCount].type=type;
+        events[eventCount].targetID=targetID;
+        events[eventCount].value=eventValue;
+        eventCount++;
+    }
+
 
     //Check END
     if (!readNextLine(file, line, 512)) {
@@ -530,10 +662,18 @@ bool ScenarioLoader::loadEnvironment(const char *filename,Environment &environme
     cout<<"Roads: "<<environment.getRoadCount()<<endl;
     return true;
 }
+//------------------------------------------------------------
+// Getter Functions
+//------------------------------------------------------------
 const char* ScenarioLoader::getScenarioName() const {
     return scenarioName;
 }
-
 const SimulationParameters& ScenarioLoader::getParameters() const {
     return parameters;
+}
+const ScheduledEvent *ScenarioLoader::getEvents() const{
+    return events;
+}
+int ScenarioLoader::getEventCount() const{
+    return eventCount;
 }
