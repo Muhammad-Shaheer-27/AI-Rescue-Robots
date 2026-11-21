@@ -45,6 +45,30 @@ int parseRequestCategory(const char* text) {
     return 0;
 }
 
+// Check if moving from currentStatus to newStatus follows the request lifecycle
+bool isValidStatusTransition(int currentStatus, int newStatus) {
+    if (currentStatus == newStatus) {
+        return false;
+    }
+
+    if (currentStatus == REQUEST_PENDING) {
+        return (newStatus == REQUEST_ASSIGNED || newStatus == REQUEST_FAILED);
+    }
+    if (currentStatus == REQUEST_ASSIGNED) {
+        return (newStatus == REQUEST_IN_PROGRESS ||
+                newStatus == REQUEST_PENDING ||
+                newStatus == REQUEST_FAILED);
+    }
+    if (currentStatus == REQUEST_IN_PROGRESS) {
+        return (newStatus == REQUEST_COMPLETED ||
+                newStatus == REQUEST_PENDING ||
+                newStatus == REQUEST_FAILED);
+    }
+
+    // COMPLETED and FAILED are final states so they dont change
+    return false;
+}
+
 // Helper function to check if Request A has higher priority than Request B
 // Rules: 1. Higher urgency, 2. Earlier report time, 3. Lower request ID
 bool hasHigherPriority(const RescueRequest& a, const RescueRequest& b) {
@@ -78,6 +102,21 @@ RescueRequest::RescueRequest(int r_id, int time, int loc, int cat, int urg, int 
     durationSteps = dur;
     status = REQUEST_PENDING;
     assignedRobotId = -1;
+}
+
+bool RescueRequest::isReportedAt(int currentTime) const {
+    if (currentTime < 0) {
+        return false;
+    }
+    return reportTime <= currentTime;
+}
+
+bool RescueRequest::isAvailableAt(int currentTime) const {
+    if (!isReportedAt(currentTime)) {
+        return false;
+    }
+    // Only available if it is pending and has no robot assigned
+    return (status == REQUEST_PENDING && assignedRobotId == -1);
 }
 
 void RescueRequest::display() const {
@@ -180,6 +219,14 @@ RescueRequest* RequestList::findRequest(int id) {
     return nullptr;
 }
 
+bool RequestList::isRequestAvailable(int id, int currentTime) {
+    RescueRequest* req = findRequest(id);
+    if (req == nullptr) {
+        return false;
+    }
+    return req->isAvailableAt(currentTime);
+}
+
 bool RequestList::removeRequest(int id) {
     RequestNode* current = head;
     RequestNode* prev = nullptr;
@@ -209,10 +256,78 @@ bool RequestList::updateStatus(int id, int newStatus) {
     if (req == nullptr) {
         return false;
     }
+    // Block invalid lifecycle jumps
+    if (!isValidStatusTransition(req->status, newStatus)) {
+        return false;
+    }
+
     req->status = newStatus;
+
+    // clear robot ID if the request goes back to pending
+    if (newStatus == REQUEST_PENDING) {
+        req->assignedRobotId = -1;
+    }
     return true;
 }
 
+bool RequestList::isRobotAssigned(int robotId) const {
+    if (robotId <= 0) {
+        return false;
+    }
+    RequestNode* current = head;
+    while (current != nullptr) {
+        int st = current->request.status;
+        if (current->request.assignedRobotId == robotId &&
+            (st == REQUEST_ASSIGNED || st == REQUEST_IN_PROGRESS)) {
+            return true;
+        }
+        current = current->next;
+    }
+    return false;
+}
+
+bool RequestList::assignRobot(int requestId, int robotId, int currentTime) {
+    if (robotId <= 0) {
+        return false;
+    }
+
+    RescueRequest* req = findRequest(requestId);
+    if (req == nullptr) {
+        return false;
+    }
+
+    //req must be reported pending and not already assigned
+    if (!req->isAvailableAt(currentTime)) {
+        return false;
+    }
+
+    //prevent the same robot from taking two active requests at once
+    if (isRobotAssigned(robotId)) {
+        return false;
+    }
+
+    req->assignedRobotId = robotId;
+    req->status = REQUEST_ASSIGNED;
+    return true;
+}
+
+bool RequestList::clearAssignedRobot(int requestId) {
+    RescueRequest* req = findRequest(requestId);
+    if (req == nullptr) {
+        return false;
+    }
+
+    //nothing to clear or request is alr finished
+    if (req->assignedRobotId == -1 ||
+        req->status == REQUEST_COMPLETED ||
+        req->status == REQUEST_FAILED) {
+        return false;
+    }
+
+    req->assignedRobotId = -1;
+    req->status = REQUEST_PENDING;
+    return true;
+}
 bool RequestList::updateUrgency(int id, int newUrgency) {
     if (newUrgency < 1 || newUrgency > 5) {
         return false;
@@ -222,12 +337,50 @@ bool RequestList::updateUrgency(int id, int newUrgency) {
         return false;
     }
 
-    // Copy the request, update urgency, remove old node, and re-insert to keep sorted order
+    //do not change urgency of reqs that are already finished
+    if (req->status == REQUEST_COMPLETED || req->status == REQUEST_FAILED) {
+        return false;
+    }
+
+    // Nothing to change if urgency is already the same
+    if (req->urgency == newUrgency) {
+        return true;
+    }
+
+    // Copy the request (keep status and assignedRobotId) remove old node and reinsert
     RescueRequest updatedReq = *req;
     updatedReq.urgency = newUrgency;
 
     removeRequest(id);
     return addRequestPriority(updatedReq);
+}
+
+RescueRequest* RequestList::getHighestPriorityPending(int currentTime) {
+    RequestNode* current = head;
+    while (current != nullptr) {
+        if (current->request.isAvailableAt(currentTime)) {
+            return &(current->request);
+        }
+        current = current->next;
+    }
+    return nullptr;
+}
+//filters req list and returns only the no of reqs that can be assigned at current moment
+int RequestList::getPendingRequests(int currentTime, RescueRequest* results[], int maxResults) {
+    if (results == nullptr || maxResults <= 0) {
+        return 0;
+    }
+
+    int found = 0;
+    RequestNode* current = head;
+    while (current != nullptr && found < maxResults) {
+        if (current->request.isAvailableAt(currentTime)) {
+            results[found] = &(current->request);    //changes req in memory
+            found++;
+        }
+        current = current->next;
+    }
+    return found;
 }
 
 RequestNode* RequestList::getHead() const {
@@ -236,6 +389,54 @@ RequestNode* RequestList::getHead() const {
 
 int RequestList::getCount() const {
     return count;
+}
+
+int RequestList::getCountByStatus(int status) const {            
+    if (status < REQUEST_PENDING || status > REQUEST_FAILED) {
+        return 0;
+    }
+
+    int total = 0;
+    RequestNode* current = head;
+    while (current != nullptr) {
+        if (current->request.status == status) {
+            total++;
+        }
+        current = current->next;
+    }
+    return total;
+}
+
+int RequestList::getAvailablePendingCount(int currentTime) const {
+    int total = 0;
+    RequestNode* current = head;
+    while (current != nullptr) {
+        if (current->request.isAvailableAt(currentTime)) {      
+            total++;              //counts how many reqs are ready to be assigned at curr time
+        }
+        current = current->next;
+    }
+    return total;
+}
+
+double RequestList::getCompletionRate() const {   //in %
+    if (count == 0) {
+        return 0.0;
+    }
+    int completed = getCountByStatus(REQUEST_COMPLETED);
+    return (completed * 100.0) / count;
+}
+
+void RequestList::displayStatistics() const {
+    cout << "\n========== REQUEST STATISTICS ==========\n";
+    cout << "Total Requests: " << count << endl;
+    cout << "Pending:        " << getCountByStatus(REQUEST_PENDING) << endl;
+    cout << "Assigned:       " << getCountByStatus(REQUEST_ASSIGNED) << endl;
+    cout << "In Progress:    " << getCountByStatus(REQUEST_IN_PROGRESS) << endl;
+    cout << "Completed:      " << getCountByStatus(REQUEST_COMPLETED) << endl;
+    cout << "Failed:         " << getCountByStatus(REQUEST_FAILED) << endl;
+    cout << "Completion Rate: " << getCompletionRate() << "%" << endl;
+    cout << "========================================\n";
 }
 
 void RequestList::displayAll() const {
