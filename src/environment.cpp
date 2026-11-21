@@ -18,6 +18,8 @@ Environment::~Environment(){
 
     delete[] locations;
     delete[] roads;
+    locations=nullptr;
+    roads=nullptr;
 }
 void Environment::clearAdjacencyLists(){
     if(locations==nullptr){
@@ -118,6 +120,10 @@ bool Environment::addRoad(int id,int fromID,int toID,int cost,int status){
 
     Location *from=findLocation(fromID);
     Location *to=findLocation(toID);
+    int fromIndex=from-locations;
+    int toIndex=to-locations;
+    int currentRoadIndex=roadCount;
+
     if(from==nullptr || to==nullptr || fromID==toID){
         return false;
     }
@@ -135,11 +141,15 @@ bool Environment::addRoad(int id,int fromID,int toID,int cost,int status){
     }
     //Attach the first node to the second node
     first->neighbourID=toID;
+    first->neighbourIndex=toIndex;
     first->roadID=id;
+    first->roadIndex=currentRoadIndex;
     first->next=from->connections;
     //Attach the second node to the first node
     second->neighbourID=fromID;
+    second->neighbourIndex=fromIndex;
     second->roadID=id;
+    second->roadIndex=currentRoadIndex;
     second->next=to->connections;
 
     //Insert both nodes into their list(head)
@@ -160,11 +170,31 @@ bool Environment::addRoad(int id,int fromID,int toID,int cost,int status){
 Location *Environment::getLocation(int id){
     return findLocation(id);
 }
+const Location *Environment::getLocationAt(int index) const{
+    if(index<0 || index>=locationCount){
+        return nullptr;
+    }
+    return &locations[index];
+}
 Road *Environment::getRoad(int id){
     return findRoad(id);
 }
+const Road *Environment::getRoadAt(int index) const{
+    if(index<0 || index>=roadCount){
+        return nullptr;
+    }
+    return &roads[index];
+}
 int Environment::getLocationCount() const{
     return locationCount;
+}
+int Environment::getLocationIndex(int id) const{
+    for(int i=0;i<locationCount;i++){
+        if(locations[i].id==id){
+            return i;
+        }
+    }
+    return -1;
 }
 int Environment::getRoadCount() const{
     return roadCount;

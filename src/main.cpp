@@ -1,5 +1,6 @@
 #include <iostream>
 #include "scenario_loader.h"
+#include "routing.h"
 
 using namespace std;
 
@@ -7,6 +8,285 @@ using namespace std;
 void printTestResult(const char* testName, bool passed) {
     cout << "[" << (passed ? "PASS" : "FAIL") << "] " << testName << endl;
 }
+
+void runRoutingTests() {
+
+    cout << "\n====================================\n";
+    cout << "       ROUTING MODULE TESTS\n";
+    cout << "====================================\n\n";
+
+    // Create a separate environment specifically for routing tests.
+    Environment testEnvironment;
+
+    testEnvironment.initialize(5, 6);
+
+    // Add five locations.
+    testEnvironment.addLocation(1, "A", LOCATION_COMMAND);
+    testEnvironment.addLocation(2, "B", LOCATION_JUNCTION);
+    testEnvironment.addLocation(3, "C", LOCATION_JUNCTION);
+    testEnvironment.addLocation(4, "D", LOCATION_BUILDING);
+    testEnvironment.addLocation(5, "E", LOCATION_HOSPITAL);
+
+    // Add six undirected roads.
+    testEnvironment.addRoad(1, 1, 2, 4, ROAD_OPEN);
+    testEnvironment.addRoad(2, 1, 3, 2, ROAD_OPEN);
+    testEnvironment.addRoad(3, 3, 2, 1, ROAD_OPEN);
+    testEnvironment.addRoad(4, 2, 4, 5, ROAD_OPEN);
+    testEnvironment.addRoad(5, 3, 4, 8, ROAD_OPEN);
+    testEnvironment.addRoad(6, 4, 5, 2, ROAD_OPEN);
+
+    cout << "--- Test Graph ---\n";
+    testEnvironment.displayEnvironment();
+
+    int path[10];
+    int pathLength;
+    int totalCost;
+
+    // ---------------------------------------------------------
+    // TEST 1: Shortest path selection
+    // ---------------------------------------------------------
+
+    cout << "\n--- [1] Shortest Path Selection ---\n";
+
+    bool found = findShortestPath(
+        testEnvironment, 1, 5,
+        path, 10, pathLength, totalCost
+    );
+    
+    bool correctPath = (
+        found &&
+        pathLength == 5 &&
+        path[0] == 1 &&
+        path[1] == 3 &&
+        path[2] == 2 &&
+        path[3] == 4 &&
+        path[4] == 5 &&
+        totalCost == 10
+    );
+
+    printTestResult(
+        "Find shortest path from 1 to 5 (1-3-2-4-5, cost 10)",
+        correctPath
+    );
+
+    if (found) {
+        cout << "Returned path: ";
+        for (int i = 0; i < pathLength; i++) {
+            cout << path[i];
+            if (i < pathLength - 1) cout << " -> ";
+        }
+        cout << "\nTotal cost: " << totalCost << "\n";
+    }
+
+    // ---------------------------------------------------------
+    // TEST 2: Reverse direction (undirected graph)
+    // ---------------------------------------------------------
+
+    cout << "\n--- [2] Undirected Road Verification ---\n";
+
+    found = findShortestPath(
+        testEnvironment, 5, 1,
+        path, 10, pathLength, totalCost
+    );
+if (found) {
+    cout << "Returned reverse path: ";
+
+    for (int i = 0; i < pathLength; i++) {
+        cout << path[i];
+
+        if (i < pathLength - 1) {
+            cout << " -> ";
+        }
+    }
+
+    cout << "\nReturned path length: " << pathLength;
+    cout << "\nReturned total cost: " << totalCost << "\n";
+}
+else {
+    cout << "Routing function returned false.\n";
+}
+    bool reverseCorrect = (
+        found &&
+        pathLength == 5 &&
+        path[0] == 5 &&
+        path[1] == 4 &&
+        path[2] == 2 &&
+        path[3] == 3 &&
+        path[4] == 1 &&
+        totalCost == 10
+    );
+
+    printTestResult(
+        "Find reverse path from 5 to 1 (cost 10)",
+        reverseCorrect
+    );
+
+    // ---------------------------------------------------------
+    // TEST 3: Blocked road handling
+    // ---------------------------------------------------------
+
+    cout << "\n--- [3] Blocked Road Handling ---\n";
+
+    // Road 3 connects locations 3 and 2.
+    // The original shortest path can no longer use it.
+    Road* blockedRoad = testEnvironment.getRoad(3);
+
+    if (blockedRoad != nullptr) {
+        blockedRoad->status = ROAD_BLOCKED;
+    }
+
+    found = findShortestPath(
+        testEnvironment, 1, 5,
+        path, 10, pathLength, totalCost
+    );
+
+    bool blockedCorrect = (
+        found &&
+        pathLength == 4 &&
+        path[0] == 1 &&
+        path[1] == 2 &&
+        path[2] == 4 &&
+        path[3] == 5 &&
+        totalCost == 11
+    );
+
+    printTestResult(
+        "Avoid blocked road 3 and find alternate path (cost 11)",
+        blockedCorrect
+    );
+
+    // ---------------------------------------------------------
+    // TEST 4: Recalculate after multiple road closures
+    // ---------------------------------------------------------
+
+    cout << "\n--- [4] Multiple Road Closures ---\n";
+
+    // Road 4 connects 2 to 4.
+    // Road 3 is already blocked.
+    // The only remaining route to location 5 is through 3 and 4.
+    Road* secondBlockedRoad = testEnvironment.getRoad(4);
+
+    if (secondBlockedRoad != nullptr) {
+        secondBlockedRoad->status = ROAD_BLOCKED;
+    }
+
+    found = findShortestPath(
+        testEnvironment, 1, 5,
+        path, 10, pathLength, totalCost
+    );
+
+    bool multipleBlocksCorrect = (
+        found &&
+        pathLength == 4 &&
+        path[0] == 1 &&
+        path[1] == 3 &&
+        path[2] == 4 &&
+        path[3] == 5 &&
+        totalCost == 12
+    );
+
+    printTestResult(
+        "Find alternate route after two road closures (cost 12)",
+        multipleBlocksCorrect
+    );
+
+    // ---------------------------------------------------------
+    // TEST 5: Unreachable destination
+    // ---------------------------------------------------------
+
+    cout << "\n--- [5] Unreachable Destination ---\n";
+
+    // Close the remaining roads connected to location 1.
+    testEnvironment.getRoad(1)->status = ROAD_BLOCKED;
+    testEnvironment.getRoad(2)->status = ROAD_BLOCKED;
+
+    found = findShortestPath(
+        testEnvironment, 1, 5,
+        path, 10, pathLength, totalCost
+    );
+
+    printTestResult(
+        "Reject route when destination is unreachable",
+        !found
+    );
+
+    // ---------------------------------------------------------
+    // TEST 6: Insufficient path array capacity
+    // ---------------------------------------------------------
+
+    cout << "\n--- [6] Path Array Capacity ---\n";
+
+    // Restore all roads.
+    for (int i = 1; i <= 6; i++) {
+        testEnvironment.getRoad(i)->status = ROAD_OPEN;
+    }
+
+    // The expected path contains five locations.
+    // Capacity of three should be insufficient.
+    found = findShortestPath(
+        testEnvironment, 1, 5,
+        path, 3, pathLength, totalCost
+    );
+
+    printTestResult(
+        "Reject path when output array capacity is insufficient",
+        !found
+    );
+
+    // ---------------------------------------------------------
+    // TEST 7: Same starting and destination location
+    // ---------------------------------------------------------
+
+    cout << "\n--- [7] Same Start and Destination ---\n";
+
+    found = findShortestPath(
+        testEnvironment, 3, 3,
+        path, 10, pathLength, totalCost
+    );
+
+    bool sameLocationCorrect = (
+        found &&
+        pathLength == 1 &&
+        path[0] == 3 &&
+        totalCost == 0
+    );
+
+    printTestResult(
+        "Path from a location to itself has cost 0",
+        sameLocationCorrect
+    );
+
+    // ---------------------------------------------------------
+    // TEST 8: Invalid location IDs
+    // ---------------------------------------------------------
+
+    cout << "\n--- [8] Invalid Location IDs ---\n";
+
+    found = findShortestPath(
+        testEnvironment, 99, 5,
+        path, 10, pathLength, totalCost
+    );
+
+    printTestResult(
+        "Reject invalid starting location",
+        !found
+    );
+
+    found = findShortestPath(
+        testEnvironment, 1, 99,
+        path, 10, pathLength, totalCost
+    );
+
+    printTestResult(
+        "Reject invalid destination location",
+        !found
+    );
+
+    cout << "\n====================================\n";
+    cout << "       ROUTING TESTS COMPLETE\n";
+    cout << "====================================\n";
+}
+
 
 void runRequestManagerTests() {
     cout << "\n====================================\n";
@@ -174,6 +454,7 @@ int main(int argc, char* argv[]) {
     cout << "====================================\n";
 
     runRequestManagerTests();
+    runRoutingTests();
 
     // =========================================================================
     // ROBOT MANAGER / ROBOT OPERATIONS TEST SUITE

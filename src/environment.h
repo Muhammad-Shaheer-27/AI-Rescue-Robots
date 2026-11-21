@@ -4,7 +4,11 @@
 
 struct AdjNode{
     int neighbourID;
+    int neighbourIndex;
+
     int roadID;
+    int roadIndex;
+
     AdjNode *next;
 };
 struct Location{
@@ -52,8 +56,13 @@ public:
     Location *getLocation(int id);
     Road *getRoad(int id);
 
+    const Location *getLocationAt(int index) const;
+    const Road *getRoadAt(int index) const;
+
     int getLocationCount() const;
     int getRoadCount() const;
+    int getLocationIndex(int id) const;
+
     void displayEnvironment() const;
 };
 #endif
