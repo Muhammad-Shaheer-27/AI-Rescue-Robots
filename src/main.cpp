@@ -2,6 +2,8 @@
 #include "scenario_loader.h"
 #include "routing.h"
 #include "event_manager.h"
+#include "assignment.h"
+#include "logger.h"
 
 using namespace std;
 
@@ -128,10 +130,7 @@ void runRoutingTests() {
 
     cout << "\n--- [3] Blocked Road Handling ---\n";
 
-    // Road 3 connects locations 3 and 2.
-    // The original shortest path can no longer use it.
     Road* blockedRoad = testEnvironment.getRoad(3);
-
     if (blockedRoad != nullptr) {
         blockedRoad->status = ROAD_BLOCKED;
     }
@@ -162,11 +161,7 @@ void runRoutingTests() {
 
     cout << "\n--- [4] Multiple Road Closures ---\n";
 
-    // Road 4 connects 2 to 4.
-    // Road 3 is already blocked.
-    // The only remaining route to location 5 is through 3 and 4.
     Road* secondBlockedRoad = testEnvironment.getRoad(4);
-
     if (secondBlockedRoad != nullptr) {
         secondBlockedRoad->status = ROAD_BLOCKED;
     }
@@ -197,7 +192,6 @@ void runRoutingTests() {
 
     cout << "\n--- [5] Unreachable Destination ---\n";
 
-    // Close the remaining roads connected to location 1.
     testEnvironment.getRoad(1)->status = ROAD_BLOCKED;
     testEnvironment.getRoad(2)->status = ROAD_BLOCKED;
 
@@ -217,13 +211,10 @@ void runRoutingTests() {
 
     cout << "\n--- [6] Path Array Capacity ---\n";
 
-    // Restore all roads.
     for (int i = 1; i <= 6; i++) {
         testEnvironment.getRoad(i)->status = ROAD_OPEN;
     }
 
-    // The expected path contains five locations.
-    // Capacity of three should be insufficient.
     found = findShortestPath(
         testEnvironment, 1, 5,
         path, 3, pathLength, totalCost
@@ -313,7 +304,6 @@ void runRequestManagerTests() {
 
     RescueRequest* pending[10];
     int found = testList.getPendingRequests(5, pending, 10);
-    // Expected order at time 5: 102 (urg 5), 101 (urg 3, id 101), 103 (urg 3, id 103). 104 is hidden.
     bool orderCorrect = (found == 3 && pending[0]->id == 102 && pending[1]->id == 101 && pending[2]->id == 103);
     printTestResult("Simultaneous requests retrieved in exact priority order", orderCorrect);
 
@@ -358,7 +348,7 @@ void runRequestManagerTests() {
 
 void runEventManagerTests() {
     cout << "\n====================================\n";
-    cout << "     EVENT MANAGER UNIT TESTS\n";
+    cout << "     EVENT MANAGER & LOGGING TESTS  \n";
     cout << "====================================\n\n";
 
     // Setup an isolated testing environment
@@ -369,44 +359,31 @@ void runEventManagerTests() {
     testEnv.addLocation(3, "Junction_B", LOCATION_JUNCTION);
     testEnv.addLocation(4, "Charging_Hub", LOCATION_CHARGING);
 
-    // Initial station availability checks
     printTestResult("Charging station 4 initially available in environment", testEnv.isStationAvailable(4));
     printTestResult("Non-charging location 1 is not a station", !testEnv.isStationAvailable(1));
 
-    // Roads:
-    // Road 1: 1 <-> 2 (cost 2)
-    // Road 2: 2 <-> 3 (cost 2)
-    // Road 3: 1 <-> 3 (cost 10)  -- slower backup route
-    // Road 4: 3 <-> 4 (cost 1)
     testEnv.addRoad(1, 1, 2, 2, ROAD_OPEN);
     testEnv.addRoad(2, 2, 3, 2, ROAD_OPEN);
     testEnv.addRoad(3, 1, 3, 10, ROAD_OPEN);
     testEnv.addRoad(4, 3, 4, 1, ROAD_OPEN);
 
-    // Setup test robot
     RobotList testRobots;
     testRobots.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 100);
     Robot* testBot = testRobots.findRobot(1);
-    testBot->setState(ROBOT_TRAVELLING); // Set travelling to test state restoration
+    testBot->setState(ROBOT_TRAVELLING);
 
-    // Setup test requests (priority ordered)
     RequestList testRequests;
     testRequests.addRequestPriority(101, 0, 4, CATEGORY_MEDICAL, 2, 5); // urg 2
-    testRequests.addRequestPriority(102, 0, 4, CATEGORY_MEDICAL, 4, 5); // urg 4 (higher priority)
+    testRequests.addRequestPriority(102, 0, 4, CATEGORY_MEDICAL, 4, 5); // urg 4
 
-    RescueRequest* topReq = testRequests.getHighestPriorityPending(0);
-    printTestResult("Request 102 initially highest priority (urg 4 vs 2)", topReq != nullptr && topReq->id == 102);
-
-    // Check initial shortest route from 1 to 4:
-    // Optimal path: 1 -> 2 -> 3 -> 4 (Cost = 2 + 2 + 1 = 5)
     int path[10];
     int pathLen = 0;
     int cost = 0;
     bool pathFound = findShortestPath(testEnv, 1, 4, path, 10, pathLen, cost);
     printTestResult("Initial route 1->4 found with cost 5", pathFound && cost == 5);
 
-    // Prepare 7 scheduled events covering all 7 event types:
-    ScheduledEvent testEvents[7];
+    // Prepare 8 scheduled events: 7 valid events covering all 7 types + 1 invalid event (to test failure handling)
+    ScheduledEvent testEvents[8];
     // t=5: BLOCK Road 1
     testEvents[0].time = 5;
     testEvents[0].type = EVENT_BLOCK;
@@ -449,65 +426,263 @@ void runEventManagerTests() {
     testEvents[6].targetID = 1;
     testEvents[6].value = 0;
 
+    // t=25: Invalid event (BLOCK non-existent Road 999) - should fail and NOT log
+    testEvents[7].time = 25;
+    testEvents[7].type = EVENT_BLOCK;
+    testEvents[7].targetID = 999;
+    testEvents[7].value = 0;
+
+    Logger testLogger;
     EventManager em;
-    em.initialize(testEvents, 7);
+    em.initialize(testEvents, 8);
 
     // 1. Advance to t=4 (no events scheduled)
-    int p0 = em.processEvents(4, testEnv, testRobots, testRequests);
+    int p0 = em.processEvents(4, testEnv, testRobots, testRequests, testLogger);
     printTestResult("No events processed before scheduled time (at t=4)", p0 == 0);
 
     // 2. Advance to t=5 (BLOCK Road 1)
-    int p1 = em.processEvents(5, testEnv, testRobots, testRequests);
+    int p1 = em.processEvents(5, testEnv, testRobots, testRequests, testLogger);
     printTestResult("1 event processed at t=5 (BLOCK Road 1)", p1 == 1);
     printTestResult("Road 1 status is now BLOCKED in environment", !testEnv.isRoadOpen(1));
+    printTestResult("Logger recorded LOG_ROAD_BLOCKED entry", testLogger.getEventCount(LOG_ROAD_BLOCKED) == 1);
 
-    // Test routing impact: Dijkstra must avoid blocked Road 1 and detour via Road 3 (1 -> 3 -> 4, cost 10 + 1 = 11)
     pathFound = findShortestPath(testEnv, 1, 4, path, 10, pathLen, cost);
     bool detourSuccess = (pathFound && pathLen == 3 && path[0] == 1 && path[1] == 3 && path[2] == 4 && cost == 11);
     printTestResult("Subsequent Dijkstra ignores blocked Road 1 & detours via Road 3 (cost 11)", detourSuccess);
 
     // 3. Process events again at t=5 to verify events are processed strictly once
-    int pDup = em.processEvents(5, testEnv, testRobots, testRequests);
+    int pDup = em.processEvents(5, testEnv, testRobots, testRequests, testLogger);
     printTestResult("Event processed strictly once (re-running t=5 returns 0)", pDup == 0);
 
     // 4. Advance to t=10 (STATION_DOWN at Location 4)
-    int p2 = em.processEvents(10, testEnv, testRobots, testRequests);
+    int p2 = em.processEvents(10, testEnv, testRobots, testRequests, testLogger);
     printTestResult("1 event processed at t=10 (STATION_DOWN Location 4)", p2 == 1);
     printTestResult("Station 4 availability updated to false in environment", !testEnv.isStationAvailable(4));
+    printTestResult("Logger recorded LOG_STATION_DOWN entry", testLogger.getEventCount(LOG_STATION_DOWN) == 1);
 
     // 5. Advance to t=15 (Two simultaneous events: SET_URGENCY 101->5, ROBOT_OFFLINE 1)
-    int p3 = em.processEvents(15, testEnv, testRobots, testRequests);
+    int p3 = em.processEvents(15, testEnv, testRobots, testRequests, testLogger);
     printTestResult("2 simultaneous events processed at t=15 in file order", p3 == 2);
-
-    topReq = testRequests.getHighestPriorityPending(15);
+    RescueRequest* topReq = testRequests.getHighestPriorityPending(15);
     printTestResult("Request 101 urgency updated to 5 & reprioritized to head of queue", topReq != nullptr && topReq->id == 101 && topReq->urgency == 5);
-    printTestResult("Robot 1 went OFFLINE (ROBOT_UNAVAILABLE, savedState=TRAVELLING)", testBot->getState() == ROBOT_UNAVAILABLE);
+    printTestResult("Robot 1 went OFFLINE (ROBOT_UNAVAILABLE)", testBot->getState() == ROBOT_UNAVAILABLE);
+    printTestResult("Logger recorded LOG_URGENCY_CHANGED entry", testLogger.getEventCount(LOG_URGENCY_CHANGED) == 1);
+    printTestResult("Logger recorded LOG_ROBOT_OFFLINE entry", testLogger.getEventCount(LOG_ROBOT_OFFLINE) == 1);
 
     // 6. Advance to t=20 (Three simultaneous events: UNBLOCK 1, STATION_UP 4, ROBOT_ONLINE 1)
-    int p4 = em.processEvents(20, testEnv, testRobots, testRequests);
+    int p4 = em.processEvents(20, testEnv, testRobots, testRequests, testLogger);
     printTestResult("3 simultaneous events processed at t=20 in file order", p4 == 3);
     printTestResult("Road 1 is now UNBLOCKED (ROAD_OPEN in environment)", testEnv.isRoadOpen(1));
 
-    // Test routing restoration: optimal path 1->2->3->4 with cost 5 is restored!
     pathFound = findShortestPath(testEnv, 1, 4, path, 10, pathLen, cost);
     bool restoreSuccess = (pathFound && pathLen == 4 && path[1] == 2 && cost == 5);
     printTestResult("Subsequent Dijkstra restores optimal route through Road 1 (cost 5)", restoreSuccess);
 
     printTestResult("Station 4 availability restored to true in environment", testEnv.isStationAvailable(4));
     printTestResult("Robot 1 restored previous operational state (TRAVELLING)", testBot->getState() == ROBOT_TRAVELLING);
+    printTestResult("Logger recorded LOG_ROAD_REOPENED entry", testLogger.getEventCount(LOG_ROAD_REOPENED) == 1);
+    printTestResult("Logger recorded LOG_STATION_UP entry", testLogger.getEventCount(LOG_STATION_UP) == 1);
+    printTestResult("Logger recorded LOG_ROBOT_ONLINE entry", testLogger.getEventCount(LOG_ROBOT_ONLINE) == 1);
 
-    // 7. Verification of EventManager tracking
-    printTestResult("All 7 scheduled events processed", em.getProcessedEventCount() == 7 && em.getRemainingEventCount() == 0);
-    printTestResult("No pending events remaining", !em.hasPendingEvents());
+    // 7. Advance to t=25 (Failed event on invalid road 999)
+    int preCount = testLogger.getCount();
+    int p5 = em.processEvents(25, testEnv, testRobots, testRequests, testLogger);
+    printTestResult("Attempted event on invalid road 999 was processed", p5 == 1);
+    printTestResult("Failed event was NOT recorded in Logger", testLogger.getCount() == preCount);
+
+    // 8. Verify EventManager statistics consistency:
+    // Total attempted = 8, Successful = 7, Failed = 1, Remaining = 0
+    printTestResult("Attempted events == 8", em.getAttemptedEventCount() == 8);
+    printTestResult("Successful events == 7", em.getSuccessfulEventCount() == 7);
+    printTestResult("Failed events == 1", em.getFailedEventCount() == 1);
+    printTestResult("Remaining events == 0", em.getRemainingEventCount() == 0);
+
+    // 9. Verify Logger entry values & simultaneous event order
+    LogEntry* curLog = testLogger.getHead();
+    bool logDetailsOk = true;
+    // Entry 1: t=5, LOG_ROAD_BLOCKED, roadID = 1, value = -1
+    if (!curLog || curLog->time != 5 || curLog->eventType != LOG_ROAD_BLOCKED || curLog->roadID != 1 || curLog->value != -1) logDetailsOk = false;
+    // Entry 2: t=10, LOG_STATION_DOWN, locationID = 4, value = -1
+    curLog = curLog ? curLog->next : nullptr;
+    if (!curLog || curLog->time != 10 || curLog->eventType != LOG_STATION_DOWN || curLog->locationID != 4 || curLog->value != -1) logDetailsOk = false;
+    // Entry 3: t=15, LOG_URGENCY_CHANGED, requestID = 101, value = 5 (Simultaneous 1)
+    curLog = curLog ? curLog->next : nullptr;
+    if (!curLog || curLog->time != 15 || curLog->eventType != LOG_URGENCY_CHANGED || curLog->requestID != 101 || curLog->value != 5) logDetailsOk = false;
+    // Entry 4: t=15, LOG_ROBOT_OFFLINE, robotID = 1, value = -1 (Simultaneous 2 - preserved order!)
+    curLog = curLog ? curLog->next : nullptr;
+    if (!curLog || curLog->time != 15 || curLog->eventType != LOG_ROBOT_OFFLINE || curLog->robotID != 1 || curLog->value != -1) logDetailsOk = false;
+    // Entry 5: t=20, LOG_ROAD_REOPENED, roadID = 1, value = -1
+    curLog = curLog ? curLog->next : nullptr;
+    if (!curLog || curLog->time != 20 || curLog->eventType != LOG_ROAD_REOPENED || curLog->roadID != 1 || curLog->value != -1) logDetailsOk = false;
+    // Entry 6: t=20, LOG_STATION_UP, locationID = 4, value = -1
+    curLog = curLog ? curLog->next : nullptr;
+    if (!curLog || curLog->time != 20 || curLog->eventType != LOG_STATION_UP || curLog->locationID != 4 || curLog->value != -1) logDetailsOk = false;
+    // Entry 7: t=20, LOG_ROBOT_ONLINE, robotID = 1, value = -1
+    curLog = curLog ? curLog->next : nullptr;
+    if (!curLog || curLog->time != 20 || curLog->eventType != LOG_ROBOT_ONLINE || curLog->robotID != 1 || curLog->value != -1) logDetailsOk = false;
+
+    printTestResult("All Logger entry fields & simultaneous event ordering verified", logDetailsOk);
 
     em.displayStatistics();
+}
+
+void runAssignmentTests() {
+    cout << "\n====================================\n";
+    cout << "     ASSIGNMENT MODULE UNIT TESTS   \n";
+    cout << "====================================\n\n";
+
+    // Setup an environment for assignment tests:
+    // Locations: 1 (Base), 2 (Midpoint), 3 (NearSite), 4 (IncidentSite), 5 (Island)
+    // Roads:
+    // Road 1: 1 <-> 2 (cost 2)
+    // Road 2: 2 <-> 4 (cost 3)   [Total route 1->4 = 5]
+    // Road 3: 3 <-> 4 (cost 1)   [Total route 3->4 = 1]
+    // Location 5 has no roads (disconnected)
+    Environment env;
+    env.initialize(5, 3);
+    env.addLocation(1, "Base", LOCATION_DEPOT);
+    env.addLocation(2, "Midpoint", LOCATION_JUNCTION);
+    env.addLocation(3, "NearSite", LOCATION_JUNCTION);
+    env.addLocation(4, "IncidentSite", LOCATION_BUILDING);
+    env.addLocation(5, "Island", LOCATION_BUILDING);
+
+    env.addRoad(1, 1, 2, 2, ROAD_OPEN);
+    env.addRoad(2, 2, 4, 3, ROAD_OPEN);
+    env.addRoad(3, 3, 4, 1, ROAD_OPEN);
+
+    int batteryPerCostUnit = 1;
+    int batteryPerWorkStep = 2;
+
+    // Test 1: One request and one suitable robot — assignment succeeds.
+    {
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 100);
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 4, CATEGORY_MEDICAL, 3, 5); // Req battery: 5*1 + 5*2 = 15
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 1: One request & one suitable robot -> assignment succeeds",
+                        count == 1 && robs.findRobot(1)->getAssignedRequestID() == 101);
+    }
+
+    // Test 2: Two requests and one robot — the robot is not assigned twice.
+    {
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 100);
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 4, CATEGORY_MEDICAL, 4, 5);
+        reqs.addRequestPriority(102, 0, 4, CATEGORY_MEDICAL, 2, 5);
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 2: Two requests & one robot -> robot is assigned only once",
+                        count == 1 && reqs.findRequest(101)->assignedRobotId == 1 && reqs.findRequest(102)->assignedRobotId == -1);
+    }
+
+    // Test 3: Robot with an incompatible capability — request remains pending.
+    {
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_FIRE, 100, 100); // FIRE robot
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 4, CATEGORY_MEDICAL, 3, 5); // MEDICAL request
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 3: Incompatible capability -> request remains pending",
+                        count == 0 && reqs.findRequest(101)->assignedRobotId == -1);
+    }
+
+    // Test 4: Robot with insufficient battery — request remains pending.
+    {
+        // Required battery for 1->4 is route 5*1 + work 5*2 = 15
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 10); // Only 10 battery
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 4, CATEGORY_MEDICAL, 3, 5);
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 4: Insufficient battery -> request remains pending",
+                        count == 0 && reqs.findRequest(101)->assignedRobotId == -1);
+    }
+
+    // Test 5: Robot with no available route — request remains pending.
+    {
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 100);
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 5, CATEGORY_MEDICAL, 3, 5); // Location 5 is disconnected!
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 5: No available route -> request remains pending",
+                        count == 0 && reqs.findRequest(101)->assignedRobotId == -1);
+    }
+
+    // Test 6: Two suitable robots with different route costs — cheaper route is selected.
+    {
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 100); // Loc 1->4 cost = 5
+        robs.addRobot(2, 3, CAPABILITY_MEDICAL, 100, 100); // Loc 3->4 cost = 1 (Cheaper!)
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 4, CATEGORY_MEDICAL, 3, 5);
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 6: Different route costs -> cheaper robot 2 selected",
+                        count == 1 && robs.findRobot(2)->getAssignedRequestID() == 101);
+    }
+
+    // Test 7: Two suitable robots with equal route costs — lower robot ID is selected.
+    {
+        RobotList robs;
+        robs.addRobot(5, 1, CAPABILITY_MEDICAL, 100, 100); // Loc 1, cost 5
+        robs.addRobot(2, 1, CAPABILITY_MEDICAL, 100, 100); // Loc 1, cost 5, lower ID 2!
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 4, CATEGORY_MEDICAL, 3, 5);
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 7: Equal route costs -> lower robot ID 2 selected",
+                        count == 1 && robs.findRobot(2)->getAssignedRequestID() == 101);
+    }
+
+    // Test 8: Multiple pending requests — higher-priority request is considered first.
+    {
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 100); // Only 1 robot available
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 4, CATEGORY_MEDICAL, 2, 5); // Urgency 2
+        reqs.addRequestPriority(102, 0, 4, CATEGORY_MEDICAL, 5, 5); // Urgency 5 (Higher priority!)
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 8: Priority ordering -> higher-urgency request 102 assigned",
+                        count == 1 && reqs.findRequest(102)->assignedRobotId == 1 && reqs.findRequest(101)->assignedRobotId == -1);
+    }
+
+    // Test 9: Request reported in the future — it is not assigned.
+    {
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 100);
+        RequestList reqs;
+        reqs.addRequestPriority(101, 10, 4, CATEGORY_MEDICAL, 5, 5); // Report time 10
+
+        int count = assignPendingRequests(env, robs, reqs, 5, batteryPerCostUnit, batteryPerWorkStep); // currentTime 5
+        printTestResult("Test 9: Future request (reported at t=10, current t=5) is not assigned",
+                        count == 0 && reqs.findRequest(101)->assignedRobotId == -1);
+    }
+
+    // Test 10: General-capability robot — it can serve any valid request category.
+    {
+        RobotList robs;
+        robs.addRobot(1, 1, CAPABILITY_GENERAL, 100, 100); // GENERAL robot
+        RequestList reqs;
+        reqs.addRequestPriority(101, 0, 4, CATEGORY_FIRE, 4, 3); // FIRE request
+
+        int count = assignPendingRequests(env, robs, reqs, 0, batteryPerCostUnit, batteryPerWorkStep);
+        printTestResult("Test 10: General capability robot successfully assigned to FIRE request",
+                        count == 1 && robs.findRobot(1)->getAssignedRequestID() == 101);
+    }
 }
 
 int main(int argc, char* argv[]) {
 
     const char* filename = "data/scenario_provided.txt";
 
-    // Allow a filename to be supplied through the command
     if (argc > 1) {
         filename = argv[1];
     }
@@ -523,7 +698,6 @@ int main(int argc, char* argv[]) {
 
     cout << "Loading scenario: " << filename << "\n\n";
 
-    // Load the complete scenario
     if (!loader.loadEnvironment(filename, environment, robots, requests)) {
         cout << "ERROR: Scenario loading failed!\n";
         return 1;
@@ -531,7 +705,6 @@ int main(int argc, char* argv[]) {
 
     cout << "Scenario loaded successfully!\n\n";
 
-    // Display scenario information
     cout << "====================================\n";
     cout << "        SCENARIO INFORMATION\n";
     cout << "====================================\n";
@@ -546,7 +719,6 @@ int main(int argc, char* argv[]) {
     cout << "Battery Per Work Step: " << p.batteryPerWorkStep << "\n";
     cout << "Recharge Per Step: " << p.rechargePerStep << "\n";
 
-    // Display environment
     cout << "\n====================================\n";
     cout << "           ENVIRONMENT\n";
     cout << "====================================\n";
@@ -556,7 +728,6 @@ int main(int argc, char* argv[]) {
 
     environment.displayEnvironment();
 
-    // Display robots
     cout << "\n====================================\n";
     cout << "              ROBOTS\n";
     cout << "====================================\n";
@@ -565,7 +736,6 @@ int main(int argc, char* argv[]) {
 
     robots.displayAll();
 
-    // Display requests
     cout << "\n====================================\n";
     cout << "             REQUESTS\n";
     cout << "====================================\n";
@@ -574,7 +744,6 @@ int main(int argc, char* argv[]) {
 
     requests.displayAll();
 
-    // Display scheduled events
     cout << "\n====================================\n";
     cout << "        SCHEDULED EVENTS\n";
     cout << "====================================\n";
@@ -601,6 +770,7 @@ int main(int argc, char* argv[]) {
     runRequestManagerTests();
     runRoutingTests();
     runEventManagerTests();
+    runAssignmentTests();
 
     // =========================================================================
     // ROBOT MANAGER / ROBOT OPERATIONS TEST SUITE
@@ -609,7 +779,6 @@ int main(int argc, char* argv[]) {
     cout << "          ROBOT MANAGER COMPREHENSIVE VERIFICATION        \n";
     cout << "==========================================================\n";
 
-    // [Test 1] Capability Matching
     cout << "\n--- [1] Capability Matching Tests ---\n";
     Robot* r1 = robots.findRobot(1);   // MEDICAL
     Robot* r10 = robots.findRobot(10); // GENERAL
@@ -624,7 +793,6 @@ int main(int argc, char* argv[]) {
              << (r10->canServe(CATEGORY_SEARCH) ? "MATCHED (PASS)" : "REJECTED (FAIL)") << "\n";
     }
 
-    // [Test 2] State Transitions Enforcement
     cout << "\n--- [2] State Transition Enforcement ---\n";
     Robot* r3 = robots.findRobot(3); // Initially AVAILABLE
     if (r3) {
@@ -638,7 +806,6 @@ int main(int argc, char* argv[]) {
         r3->setState(ROBOT_AVAILABLE);
     }
 
-    // [Test 3] Assignment and Release Lifecycle
     cout << "\n--- [3] Assignment & Release Lifecycle ---\n";
     if (r3) {
         bool assignOk = robots.assignRobot(3, 101);
@@ -662,7 +829,6 @@ int main(int argc, char* argv[]) {
         cout << "Robot 3 State after completion:          " << getRobotStateName(r3->getState()) << "\n";
     }
 
-    // [Test 4] Movement: Separate Movement Cost & Battery Consumption
     cout << "\n--- [4] Movement & Resource Constraints ---\n";
     Robot* r4 = robots.findRobot(4); // Start Location 32, max_battery 120, current 120
     if (r4) {
@@ -685,8 +851,7 @@ int main(int argc, char* argv[]) {
         cout << "Attempt move with insufficient battery:  " << (!overBudgetMove ? "BLOCKED (PASS)" : "FAILED (Moved)") << "\n";
     }
 
-    // [Test 5] Charging Operations & Station Availability
-    cout << "\n--- [5] Charging Operations (Station Availability) ---\n";
+    cout << "\n--- [5] Charging Operations & Station Availability ---\n";
     Robot* r8 = robots.findRobot(8); // SEARCH robot, battery 90/90
     if (r8) {
         r8->consumeBattery(40);
@@ -711,8 +876,7 @@ int main(int argc, char* argv[]) {
              << (addedDown == 0 && r8->getState() == ROBOT_AVAILABLE ? " (PASS)" : " (FAIL)") << "\n";
     }
 
-    // [Test 6] Offline / Online Handling & State Restoration
-    cout << "\n--- [6] Offline / Online Handling with State Restoration ---\n";
+    cout << "\n--- [6] Offline / Online Handling & State Restoration ---\n";
     Robot* r2 = robots.findRobot(2);
     if (r2) {
         r2->setState(ROBOT_TRAVELLING);
@@ -743,35 +907,38 @@ int main(int argc, char* argv[]) {
              << (assign501 && rel501 && r2->getState() == ROBOT_AVAILABLE ? " (PASS)" : " (FAIL)") << "\n";
     }
 
-    // [Test 7] Robot Fleet Statistics
     cout << "\n--- [7] Fleet & Per-Robot Statistics ---\n";
     robots.displayStatistics();
 
     // =========================================================================
-    // SCENARIO EVENT PROCESSING TEST (Real Scenario Events)
+    // SCENARIO EVENT PROCESSING & LOGGING (scenario_provided.txt)
     // =========================================================================
     cout << "\n==========================================================\n";
     cout << "     SCENARIO EVENT PROCESSING (scenario_provided.txt)    \n";
     cout << "==========================================================\n";
 
+    Logger scenarioLogger;
     EventManager scenarioEventManager;
     scenarioEventManager.initialize(events, eventCount);
 
     cout << "\n[Step 1] Advancing to t=20 (First scheduled event in file: BLOCK Road 22)\n";
-    int evCount20 = scenarioEventManager.processEvents(20, environment, robots, requests);
+    int evCount20 = scenarioEventManager.processEvents(20, environment, robots, requests, scenarioLogger);
     cout << "Events processed at t=20: " << evCount20 << endl;
     printTestResult("Road 22 is now BLOCKED in scenario environment", !environment.isRoadOpen(22));
+    printTestResult("Scenario Logger recorded Road 22 blocked", scenarioLogger.getEventCount(LOG_ROAD_BLOCKED) == 1);
 
     cout << "\n[Step 2] Advancing to t=50 (Includes BLOCK 3 and STATION_DOWN 19)\n";
-    int evCount50 = scenarioEventManager.processEvents(50, environment, robots, requests);
+    int evCount50 = scenarioEventManager.processEvents(50, environment, robots, requests, scenarioLogger);
     cout << "Events processed between t=21 and t=50: " << evCount50 << endl;
     printTestResult("Road 3 is now BLOCKED in scenario environment", !environment.isRoadOpen(3));
     printTestResult("Station 19 is now OFFLINE in scenario environment", !environment.isStationAvailable(19));
 
     cout << "\n[Step 3] Advancing to end of simulation (max_steps = " << p.maxSteps << ")\n";
-    int evCountEnd = scenarioEventManager.processEvents(p.maxSteps, environment, robots, requests);
+    int evCountEnd = scenarioEventManager.processEvents(p.maxSteps, environment, robots, requests, scenarioLogger);
     cout << "Remaining events processed up to t=" << p.maxSteps << ": " << evCountEnd << endl;
-    printTestResult("All scenario events processed", scenarioEventManager.getRemainingEventCount() == 0);
+    printTestResult("All scenario events attempted", scenarioEventManager.getRemainingEventCount() == 0);
+    printTestResult("Total events in scenario logger matches successful events",
+                    scenarioLogger.getCount() == scenarioEventManager.getSuccessfulEventCount());
 
     scenarioEventManager.displayStatistics();
 

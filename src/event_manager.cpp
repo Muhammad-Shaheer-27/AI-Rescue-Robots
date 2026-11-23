@@ -45,7 +45,12 @@ void EventManager::initialize(const ScheduledEvent* eventArray, int totalEvents)
     robotOnlineEventsProcessed = 0;
 }
 
-bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& environment,RobotList& robots,RequestList& requests
+bool EventManager::applySingleEvent(
+    const ScheduledEvent& ev,
+    Environment& environment,
+    RobotList& robots,
+    RequestList& requests,
+    Logger& logger
 ) {
     bool success = false;
 
@@ -55,6 +60,7 @@ bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& enviro
             if (success) {
                 blockEventsProcessed++;
                 totalEventsProcessed++;
+                logger.addEntry(ev.time, LOG_ROAD_BLOCKED, -1, -1, -1, ev.targetID, -1);
             }
             cout << "[Time " << ev.time << "] EVENT BLOCK: Road " << ev.targetID
                  << (success ? " is now BLOCKED." : " FAILED (Road not found).") << endl;
@@ -66,6 +72,7 @@ bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& enviro
             if (success) {
                 unblockEventsProcessed++;
                 totalEventsProcessed++;
+                logger.addEntry(ev.time, LOG_ROAD_REOPENED, -1, -1, -1, ev.targetID, -1);
             }
             cout << "[Time " << ev.time << "] EVENT UNBLOCK: Road " << ev.targetID
                  << (success ? " is now OPEN." : " FAILED (Road not found).") << endl;
@@ -77,6 +84,7 @@ bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& enviro
             if (success) {
                 stationDownEventsProcessed++;
                 totalEventsProcessed++;
+                logger.addEntry(ev.time, LOG_STATION_DOWN, -1, -1, ev.targetID, -1, -1);
             }
             cout << "[Time " << ev.time << "] EVENT STATION_DOWN: Charging Station at Location " << ev.targetID
                  << (success ? " went OFFLINE." : " FAILED (Invalid station location).") << endl;
@@ -88,6 +96,7 @@ bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& enviro
             if (success) {
                 stationUpEventsProcessed++;
                 totalEventsProcessed++;
+                logger.addEntry(ev.time, LOG_STATION_UP, -1, -1, ev.targetID, -1, -1);
             }
             cout << "[Time " << ev.time << "] EVENT STATION_UP: Charging Station at Location " << ev.targetID
                  << (success ? " is now AVAILABLE." : " FAILED (Invalid station location).") << endl;
@@ -99,6 +108,7 @@ bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& enviro
             if (success) {
                 urgencyEventsProcessed++;
                 totalEventsProcessed++;
+                logger.addEntry(ev.time, LOG_URGENCY_CHANGED, -1, ev.targetID, -1, -1, ev.value);
             }
             cout << "[Time " << ev.time << "] EVENT SET_URGENCY: Request " << ev.targetID
                  << " urgency updated to " << ev.value
@@ -111,6 +121,7 @@ bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& enviro
             if (success) {
                 robotOfflineEventsProcessed++;
                 totalEventsProcessed++;
+                logger.addEntry(ev.time, LOG_ROBOT_OFFLINE, ev.targetID, -1, -1, -1, -1);
             }
             cout << "[Time " << ev.time << "] EVENT ROBOT_OFFLINE: Robot " << ev.targetID
                  << (success ? " is now OFFLINE (State saved)." : " (Already offline/not found).") << endl;
@@ -122,6 +133,7 @@ bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& enviro
             if (success) {
                 robotOnlineEventsProcessed++;
                 totalEventsProcessed++;
+                logger.addEntry(ev.time, LOG_ROBOT_ONLINE, ev.targetID, -1, -1, -1, -1);
             }
             cout << "[Time " << ev.time << "] EVENT ROBOT_ONLINE: Robot " << ev.targetID
                  << (success ? " is now ONLINE (State restored)." : " (Already online/not found).") << endl;
@@ -137,7 +149,13 @@ bool EventManager::applySingleEvent(const ScheduledEvent& ev,Environment& enviro
     return success;
 }
 
-int EventManager::processEvents(int currentTime,Environment& environment,RobotList& robots,RequestList& requests) {
+int EventManager::processEvents(
+    int currentTime,
+    Environment& environment,
+    RobotList& robots,
+    RequestList& requests,
+    Logger& logger
+) {
     if (events == nullptr || nextEventIndex >= eventCount) {
         return 0;
     }
@@ -147,7 +165,7 @@ int EventManager::processEvents(int currentTime,Environment& environment,RobotLi
     // Process all events scheduled at or before currentTime in their exact input file order
     while (nextEventIndex < eventCount && events[nextEventIndex].time <= currentTime) {
         const ScheduledEvent& ev = events[nextEventIndex];
-        applySingleEvent(ev, environment, robots, requests);
+        applySingleEvent(ev, environment, robots, requests, logger);
         nextEventIndex++; // Strictly advances: event cannot be processed more than once
         countThisStep++;
     }
@@ -155,12 +173,34 @@ int EventManager::processEvents(int currentTime,Environment& environment,RobotLi
     return countThisStep;
 }
 
+int EventManager::processEvents(
+    int currentTime,
+    Environment& environment,
+    RobotList& robots,
+    RequestList& requests
+) {
+    Logger dummyLogger;
+    return processEvents(currentTime, environment, robots, requests, dummyLogger);
+}
+
 int EventManager::getTotalEventCount() const {
     return eventCount;
 }
 
-int EventManager::getProcessedEventCount() const {
+int EventManager::getAttemptedEventCount() const {
     return nextEventIndex;
+}
+
+int EventManager::getSuccessfulEventCount() const {
+    return totalEventsProcessed;
+}
+
+int EventManager::getFailedEventCount() const {
+    return (nextEventIndex - totalEventsProcessed);
+}
+
+int EventManager::getProcessedEventCount() const {
+    return totalEventsProcessed;
 }
 
 int EventManager::getRemainingEventCount() const {
@@ -200,7 +240,9 @@ void EventManager::reset() {
 void EventManager::displayStatistics() const {
     cout << "\n========== EVENT MANAGER STATISTICS ==========\n";
     cout << "Total Scheduled Events:       " << eventCount << endl;
-    cout << "Total Events Processed:       " << nextEventIndex << endl;
+    cout << "Total Events Attempted:       " << nextEventIndex << endl;
+    cout << "Total Events Succeeded:       " << totalEventsProcessed << endl;
+    cout << "Total Events Failed:          " << (nextEventIndex - totalEventsProcessed) << endl;
     cout << "Remaining Pending Events:     " << getRemainingEventCount() << endl;
     cout << "----------------------------------------------\n";
     cout << "  Road Block Events:          " << blockEventsProcessed << endl;
