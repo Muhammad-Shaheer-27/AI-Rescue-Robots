@@ -16,6 +16,7 @@ struct Location{
     char name[50];
     int type;
     AdjNode *connections;
+    bool stationAvailable;
 };
 struct Road{
     int id;
@@ -62,6 +63,15 @@ public:
     int getLocationCount() const;
     int getRoadCount() const;
     int getLocationIndex(int id) const;
+
+    // Station Availability Operations (Dynamic Events)
+    bool setStationAvailability(int locationID, bool available);
+    bool isStationAvailable(int locationID) const;
+
+    // Road Status Operations (Dynamic Events)
+    bool blockRoad(int roadID);
+    bool unblockRoad(int roadID);
+    bool isRoadOpen(int roadID) const;
 
     void displayEnvironment() const;
 };

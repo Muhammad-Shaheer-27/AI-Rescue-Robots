@@ -55,6 +55,7 @@ bool Environment::initialize(int maxLocations,int maxRoads){
         locations=new Location[maxLocations];
         for(int i=0;i<maxLocations;i++){
             locations[i].connections=nullptr;
+            locations[i].stationAvailable=false;
         }
     }
     if(maxRoads>0){
@@ -98,6 +99,7 @@ bool Environment::addLocation(int id,const char *name,int type){
     strcpy(locations[locationCount].name,name);
     locations[locationCount].type=type;
     locations[locationCount].connections=nullptr;
+    locations[locationCount].stationAvailable=(type == LOCATION_CHARGING);
     locationCount++;
     
     return true;
@@ -120,13 +122,14 @@ bool Environment::addRoad(int id,int fromID,int toID,int cost,int status){
 
     Location *from=findLocation(fromID);
     Location *to=findLocation(toID);
-    int fromIndex=from-locations;
-    int toIndex=to-locations;
-    int currentRoadIndex=roadCount;
 
     if(from==nullptr || to==nullptr || fromID==toID){
         return false;
     }
+
+    int fromIndex=from-locations;
+    int toIndex=to-locations;
+    int currentRoadIndex=roadCount;
 
     //Create adjacency node for the first location
     AdjNode *first=new AdjNode;
@@ -199,6 +202,54 @@ int Environment::getLocationIndex(int id) const{
 int Environment::getRoadCount() const{
     return roadCount;
 }
+
+// Station Availability Operations (Dynamic Events)
+bool Environment::setStationAvailability(int locationID, bool available){
+    Location *loc = findLocation(locationID);
+    if(loc == nullptr || loc->type != LOCATION_CHARGING){
+        return false;
+    }
+    loc->stationAvailable = available;
+    return true;
+}
+
+bool Environment::isStationAvailable(int locationID) const{
+    for(int i=0; i<locationCount; i++){
+        if(locations[i].id == locationID){
+            return (locations[i].type == LOCATION_CHARGING && locations[i].stationAvailable);
+        }
+    }
+    return false;
+}
+
+// Road Status Operations (Dynamic Events)
+bool Environment::blockRoad(int roadID){
+    Road *road = findRoad(roadID);
+    if(road == nullptr){
+        return false;
+    }
+    road->status = ROAD_BLOCKED;
+    return true;
+}
+
+bool Environment::unblockRoad(int roadID){
+    Road *road = findRoad(roadID);
+    if(road == nullptr){
+        return false;
+    }
+    road->status = ROAD_OPEN;
+    return true;
+}
+
+bool Environment::isRoadOpen(int roadID) const{
+    for(int i=0; i<roadCount; i++){
+        if(roads[i].id == roadID){
+            return (roads[i].status == ROAD_OPEN);
+        }
+    }
+    return false;
+}
+
 void Environment::displayEnvironment() const{
     cout<<"\n========== ENVIROMENT ==========\n";
     cout<<"Total Locations: "<<locationCount<<endl;
@@ -208,6 +259,9 @@ void Environment::displayEnvironment() const{
         cout<<"Location ID: "<<locations[i].id<<endl;
         cout<<"Name: "<<locations[i].name<<endl;
         cout<<"Type: "<<locations[i].type<<endl;
+        if(locations[i].type == LOCATION_CHARGING){
+            cout<<"Station Status: "<<(locations[i].stationAvailable ? "AVAILABLE" : "UNAVAILABLE")<<endl;
+        }
 
         cout<<"Connections: ";
         AdjNode *current=locations[i].connections;
