@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include "scenario_loader.h"
 #include "routing.h"
 #include "event_manager.h"
@@ -679,7 +680,259 @@ void runAssignmentTests() {
                         count == 1 && robs.findRobot(1)->getAssignedRequestID() == 101);
     }
 }
+void runRobotManagerTests() {
 
+    cout << "\n==========================================================\n";
+    cout << "          ROBOT MANAGER COMPREHENSIVE VERIFICATION        \n";
+    cout << "==========================================================\n";
+
+    // Independent robots: these tests do not depend on any scenario.
+    RobotList testRobots;
+
+    testRobots.addRobot(1, 1, CAPABILITY_MEDICAL, 100, 100);
+    testRobots.addRobot(2, 2, CAPABILITY_GENERAL, 100, 100);
+    testRobots.addRobot(3, 3, CAPABILITY_SEARCH, 100, 100);
+    testRobots.addRobot(4, 32, CAPABILITY_MEDICAL, 120, 120);
+    testRobots.addRobot(8, 8, CAPABILITY_SEARCH, 90, 90);
+
+    // ---------------------------------------------------------
+    // [1] Capability Matching Tests
+    // ---------------------------------------------------------
+    cout << "\n--- [1] Capability Matching Tests ---\n";
+
+    Robot* r1 = testRobots.findRobot(1);
+    Robot* r2 = testRobots.findRobot(2);
+
+    if (r1 && r2) {
+        printTestResult(
+            "MEDICAL robot accepts MEDICAL request",
+            r1->canServe(CATEGORY_MEDICAL)
+        );
+
+        printTestResult(
+            "MEDICAL robot rejects FIRE request",
+            !r1->canServe(CATEGORY_FIRE)
+        );
+
+        printTestResult(
+            "GENERAL robot accepts FIRE request",
+            r2->canServe(CATEGORY_FIRE)
+        );
+
+        printTestResult(
+            "GENERAL robot accepts SEARCH request",
+            r2->canServe(CATEGORY_SEARCH)
+        );
+    }
+
+    // ---------------------------------------------------------
+    // [2] State Transition Enforcement
+    // ---------------------------------------------------------
+    cout << "\n--- [2] State Transition Enforcement ---\n";
+
+    Robot* r3 = testRobots.findRobot(3);
+
+    if (r3) {
+        cout << "Robot 3 initial state: "
+             << getRobotStateName(r3->getState()) << "\n";
+
+        bool validTrans = r3->setState(ROBOT_TRAVELLING);
+
+        printTestResult(
+            "AVAILABLE -> TRAVELLING is allowed",
+            validTrans
+        );
+
+        bool badStateTrans = r3->setState(99);
+
+        printTestResult(
+            "Transition to invalid state 99 is rejected",
+            !badStateTrans
+        );
+
+        r3->setState(ROBOT_AVAILABLE);
+    }
+
+    // ---------------------------------------------------------
+    // [3] Assignment & Release Lifecycle
+    // ---------------------------------------------------------
+    cout << "\n--- [3] Assignment & Release Lifecycle ---\n";
+
+    if (r3) {
+        bool assignOk = testRobots.assignRobot(3, 101);
+
+        printTestResult(
+            "Assign Request 101 to Robot 3",
+            assignOk
+        );
+
+        bool doubleAssign = testRobots.assignRobot(3, 102);
+
+        printTestResult(
+            "Prevent second assignment to Robot 3",
+            !doubleAssign
+        );
+
+        bool releaseOk = testRobots.releaseRobot(3);
+
+        printTestResult(
+            "Release Robot 3 from Request 101",
+            releaseOk
+        );
+
+        bool assignAgain = testRobots.assignRobot(3, 103);
+
+        if (assignAgain) {
+            r3->setState(ROBOT_PERFORMING);
+        }
+
+        bool completeOk = testRobots.completeRobotTask(3);
+
+        printTestResult(
+            "Complete Robot 3's assigned task",
+            assignAgain && completeOk
+        );
+
+        cout << "Robot 3 Tasks Completed: "
+             << r3->getTasksCompleted() << "\n";
+    }
+
+    // ---------------------------------------------------------
+    // [4] Movement & Resource Constraints
+    // ---------------------------------------------------------
+    cout << "\n--- [4] Movement & Resource Constraints ---\n";
+
+    Robot* r4 = testRobots.findRobot(4);
+
+    if (r4) {
+        int initialMove = r4->getTotalMovementCost();
+        int initialConsumed = r4->getTotalBatteryConsumed();
+
+        int roadCost = 8;
+        int batteryCost = 12;
+
+        bool moved = r4->moveTo(39, roadCost, batteryCost);
+
+        printTestResult(
+            "Robot can move when it has sufficient battery",
+            moved
+        );
+
+        cout << "New Location: " << r4->getCurrentLocation() << "\n";
+        cout << "Movement Cost Added: "
+             << r4->getTotalMovementCost() - initialMove << "\n";
+        cout << "Battery Consumed Added: "
+             << r4->getTotalBatteryConsumed() - initialConsumed << "\n";
+
+        bool overBudgetMove = r4->moveTo(
+            45, 10, r4->getCurrentBattery() + 50
+        );
+
+        printTestResult(
+            "Reject movement when battery is insufficient",
+            !overBudgetMove
+        );
+    }
+
+    // ---------------------------------------------------------
+    // [5] Charging Operations
+    // ---------------------------------------------------------
+    cout << "\n--- [5] Charging Operations & Station Availability ---\n";
+
+    Robot* r8 = testRobots.findRobot(8);
+
+    if (r8) {
+        r8->consumeBattery(40);
+
+        cout << "Battery before charging: "
+             << r8->getCurrentBattery() << "/"
+             << r8->getMaxBattery() << "\n";
+
+        bool startDown = r8->startRecharging(false);
+
+        printTestResult(
+            "Reject charging at an offline station",
+            !startDown
+        );
+
+        bool startUp = r8->startRecharging(true);
+
+        printTestResult(
+            "Allow charging at an online station",
+            startUp
+        );
+
+        bool moveWhileCharging = r8->moveTo(15, 2, 2);
+
+        printTestResult(
+            "Prevent movement while recharging",
+            !moveWhileCharging
+        );
+
+        int added = testRobots.rechargeRobotStep(8, 15, true);
+
+        cout << "Battery added in recharge step: "
+             << added << "\n";
+
+        int addedDown = testRobots.rechargeRobotStep(8, 15, false);
+
+        printTestResult(
+            "Stop charging when station becomes unavailable",
+            addedDown == 0 &&
+            r8->getState() == ROBOT_AVAILABLE
+        );
+    }
+
+    // ---------------------------------------------------------
+    // [6] Offline / Online Handling
+    // ---------------------------------------------------------
+    cout << "\n--- [6] Offline / Online Handling ---\n";
+
+    Robot* offlineRobot = testRobots.findRobot(1);
+
+    if (offlineRobot) {
+        offlineRobot->setState(ROBOT_TRAVELLING);
+
+        bool offOk = testRobots.setRobotOffline(1);
+
+        printTestResult(
+            "Robot can be taken offline",
+            offOk && offlineRobot->getState() == ROBOT_UNAVAILABLE
+        );
+
+        bool moveWhileOffline = offlineRobot->moveTo(10, 5, 5);
+
+        printTestResult(
+            "Prevent movement while robot is offline",
+            !moveWhileOffline
+        );
+
+        bool duplicateOffline = testRobots.setRobotOffline(1);
+
+        printTestResult(
+            "Handle duplicate offline event safely",
+            !duplicateOffline
+        );
+
+        bool onOk = testRobots.setRobotOnline(1);
+
+        printTestResult(
+            "Robot can be brought online",
+            onOk && offlineRobot->getState() == ROBOT_TRAVELLING
+        );
+    }
+
+    // ---------------------------------------------------------
+    // [7] Fleet & Per-Robot Statistics
+    // ---------------------------------------------------------
+    cout << "\n--- [7] Fleet & Per-Robot Statistics ---\n";
+
+    testRobots.displayStatistics();
+
+    cout << "\n==========================================================\n";
+    cout << "          ROBOT MANAGER TESTS COMPLETE                   \n";
+    cout << "==========================================================\n";
+}
 int main(int argc, char* argv[]) {
 
     const char* filename = "data/scenario_provided.txt";
@@ -779,138 +1032,7 @@ int main(int argc, char* argv[]) {
     cout << "\n==========================================================\n";
     cout << "          ROBOT MANAGER COMPREHENSIVE VERIFICATION        \n";
     cout << "==========================================================\n";
-
-    cout << "\n--- [1] Capability Matching Tests ---\n";
-    Robot* r1 = robots.findRobot(1);   // MEDICAL
-    Robot* r10 = robots.findRobot(10); // GENERAL
-    if (r1 && r10) {
-        cout << "Robot 1 (MEDICAL) -> Category MEDICAL: "
-             << (r1->canServe(CATEGORY_MEDICAL) ? "MATCHED (PASS)" : "REJECTED (FAIL)") << "\n";
-        cout << "Robot 1 (MEDICAL) -> Category FIRE:    "
-             << (!r1->canServe(CATEGORY_FIRE) ? "REJECTED (PASS)" : "MATCHED (FAIL)") << "\n";
-        cout << "Robot 10 (GENERAL) -> Category FIRE:   "
-             << (r10->canServe(CATEGORY_FIRE) ? "MATCHED (PASS)" : "REJECTED (FAIL)") << "\n";
-        cout << "Robot 10 (GENERAL) -> Category SEARCH: "
-             << (r10->canServe(CATEGORY_SEARCH) ? "MATCHED (PASS)" : "REJECTED (FAIL)") << "\n";
-    }
-
-    cout << "\n--- [2] State Transition Enforcement ---\n";
-    Robot* r3 = robots.findRobot(3); // Initially AVAILABLE
-    if (r3) {
-        cout << "Robot 3 initial state: " << getRobotStateName(r3->getState()) << "\n";
-        bool validTrans = r3->setState(ROBOT_TRAVELLING);
-        cout << "Transition AVAILABLE -> TRAVELLING: " << (validTrans ? "ALLOWED (PASS)" : "BLOCKED (FAIL)") << "\n";
-
-        bool badStateTrans = r3->setState(99);
-        cout << "Transition to invalid state 99:     " << (!badStateTrans ? "BLOCKED (PASS)" : "ALLOWED (FAIL)") << "\n";
-
-        r3->setState(ROBOT_AVAILABLE);
-    }
-
-    cout << "\n--- [3] Assignment & Release Lifecycle ---\n";
-    if (r3) {
-        bool assignOk = robots.assignRobot(3, 101);
-        cout << "Assign Request 101 to Robot 3:           " << (assignOk ? "SUCCESS (PASS)" : "FAIL") << "\n";
-        cout << "Robot 3 State after assignment:          " << getRobotStateName(r3->getState()) << "\n";
-        cout << "Robot 3 Active Request ID:               " << r3->getAssignedRequestID() << "\n";
-
-        bool doubleAssign = robots.assignRobot(3, 102);
-        cout << "Attempt second assignment (conflict):    " << (!doubleAssign ? "PREVENTED (PASS)" : "FAILED (Allowed)") << "\n";
-
-        bool releaseOk = robots.releaseRobot(3);
-        cout << "Release Request 101:                     " << (releaseOk ? "SUCCESS (PASS)" : "FAIL") << "\n";
-        cout << "Robot 3 State after release:             " << getRobotStateName(r3->getState()) << "\n";
-        cout << "Robot 3 Reassignments counter:           " << r3->getTotalReassignments() << "\n";
-
-        robots.assignRobot(3, 103);
-        r3->setState(ROBOT_PERFORMING);
-        bool completeOk = robots.completeRobotTask(3);
-        cout << "Complete Request 103:                    " << (completeOk ? "SUCCESS (PASS)" : "FAIL") << "\n";
-        cout << "Robot 3 Tasks Completed:                 " << r3->getTasksCompleted() << "\n";
-        cout << "Robot 3 State after completion:          " << getRobotStateName(r3->getState()) << "\n";
-    }
-
-    cout << "\n--- [4] Movement & Resource Constraints ---\n";
-    Robot* r4 = robots.findRobot(4); // Start Location 32, max_battery 120, current 120
-    if (r4) {
-        int initialBat = r4->getCurrentBattery();
-        int initialMove = r4->getTotalMovementCost();
-        int initialConsumed = r4->getTotalBatteryConsumed();
-
-        int roadCost = 8;
-        int batteryCost = 12;
-        bool moved = r4->moveTo(39, roadCost, batteryCost);
-
-        cout << "Move to Loc 39 (Road Cost=" << roadCost << ", Battery Cost=" << batteryCost << "): "
-             << (moved ? "SUCCESS (PASS)" : "FAIL") << "\n";
-        cout << "  New Location:                  " << r4->getCurrentLocation() << "\n";
-        cout << "  Total Movement Cost:           " << r4->getTotalMovementCost() << " (Delta: +" << (r4->getTotalMovementCost() - initialMove) << ")\n";
-        cout << "  Total Battery Consumed:        " << r4->getTotalBatteryConsumed() << " (Delta: +" << (r4->getTotalBatteryConsumed() - initialConsumed) << ")\n";
-        cout << "  Remaining Battery:             " << r4->getCurrentBattery() << "/" << r4->getMaxBattery() << "\n";
-
-        bool overBudgetMove = r4->moveTo(45, 10, r4->getCurrentBattery() + 50);
-        cout << "Attempt move with insufficient battery:  " << (!overBudgetMove ? "BLOCKED (PASS)" : "FAILED (Moved)") << "\n";
-    }
-
-    cout << "\n--- [5] Charging Operations & Station Availability ---\n";
-    Robot* r8 = robots.findRobot(8); // SEARCH robot, battery 90/90
-    if (r8) {
-        r8->consumeBattery(40);
-        cout << "Robot 8 Battery before charging: " << r8->getCurrentBattery() << "/" << r8->getMaxBattery() << "\n";
-
-        bool startDown = r8->startRecharging(false); // stationAvailable = false
-        cout << "Start recharging at OFFLINE station: " << (!startDown ? "REJECTED (PASS)" : "ALLOWED (FAIL)") << "\n";
-
-        bool startUp = r8->startRecharging(true); // stationAvailable = true
-        cout << "Start recharging at ONLINE station:  " << (startUp ? "STARTED (PASS)" : "FAIL") << "\n";
-        cout << "Robot 8 State while recharging:      " << getRobotStateName(r8->getState()) << "\n";
-
-        bool moveWhileCharging = r8->moveTo(15, 2, 2);
-        cout << "Attempt movement while RECHARGING:   " << (!moveWhileCharging ? "BLOCKED (PASS)" : "ALLOWED (FAIL)") << "\n";
-
-        int added = robots.rechargeRobotStep(8, 15, true);
-        cout << "Step recharge (+15 units):           Added " << added << " -> Current Battery: " << r8->getCurrentBattery() << "\n";
-
-        int addedDown = robots.rechargeRobotStep(8, 15, false);
-        cout << "Step recharge during station failure: Added " << addedDown << " -> State reset to "
-             << getRobotStateName(r8->getState())
-             << (addedDown == 0 && r8->getState() == ROBOT_AVAILABLE ? " (PASS)" : " (FAIL)") << "\n";
-    }
-
-    cout << "\n--- [6] Offline / Online Handling & State Restoration ---\n";
-    Robot* r2 = robots.findRobot(2);
-    if (r2) {
-        r2->setState(ROBOT_TRAVELLING);
-        cout << "Robot 2 operational state before event: " << getRobotStateName(r2->getState()) << "\n";
-
-        bool offOk = robots.setRobotOffline(2);
-        cout << "Event ROBOT_OFFLINE applied:             " << (offOk ? "OFFLINE (PASS)" : "FAIL") << "\n";
-        cout << "Robot 2 state:                           " << getRobotStateName(r2->getState()) << "\n";
-
-        bool moveWhileOffline = r2->moveTo(10, 5, 5);
-        cout << "Attempt movement while OFFLINE:          " << (!moveWhileOffline ? "BLOCKED (PASS)" : "ALLOWED (FAIL)") << "\n";
-
-        bool dupOff = robots.setRobotOffline(2);
-        cout << "Duplicate ROBOT_OFFLINE safety:          " << (!dupOff ? "IGNORED SAFELY (PASS)" : "FAIL") << "\n";
-
-        bool onOk = robots.setRobotOnline(2);
-        cout << "Event ROBOT_ONLINE applied:              " << (onOk ? "ONLINE (PASS)" : "FAIL") << "\n";
-        cout << "Robot 2 restored state:                  " << getRobotStateName(r2->getState())
-             << (r2->getState() == ROBOT_TRAVELLING ? " (PASS)" : " (FAIL)") << "\n";
-
-        // Edge case: Release assignment while offline
-        r2->setState(ROBOT_AVAILABLE);
-        bool assign501 = robots.assignRobot(2, 501);
-        robots.setRobotOffline(2);
-        bool rel501 = robots.releaseRobot(2);
-        robots.setRobotOnline(2);
-        cout << "Robot 2 online after offline release:    " << getRobotStateName(r2->getState())
-             << (assign501 && rel501 && r2->getState() == ROBOT_AVAILABLE ? " (PASS)" : " (FAIL)") << "\n";
-    }
-
-    cout << "\n--- [7] Fleet & Per-Robot Statistics ---\n";
-    robots.displayStatistics();
-
+    runRobotManagerTests();
     // =========================================================================
     // SCENARIO EVENT PROCESSING & LOGGING (scenario_provided.txt)
     // =========================================================================
@@ -918,31 +1040,68 @@ int main(int argc, char* argv[]) {
     cout << "     SCENARIO EVENT PROCESSING (scenario_provided.txt)    \n";
     cout << "==========================================================\n";
 
-    Logger scenarioLogger;
-    EventManager scenarioEventManager;
-    scenarioEventManager.initialize(events, eventCount);
+Logger scenarioLogger;
+EventManager scenarioEventManager;
 
-    cout << "\n[Step 1] Advancing to t=20 (First scheduled event in file: BLOCK Road 22)\n";
-    int evCount20 = scenarioEventManager.processEvents(20, environment, robots, requests, scenarioLogger);
-    cout << "Events processed at t=20: " << evCount20 << endl;
-    printTestResult("Road 22 is now BLOCKED in scenario environment", !environment.isRoadOpen(22));
-    printTestResult("Scenario Logger recorded Road 22 blocked", scenarioLogger.getEventCount(LOG_ROAD_BLOCKED) == 1);
+scenarioEventManager.initialize(events, eventCount);
 
-    cout << "\n[Step 2] Advancing to t=50 (Includes BLOCK 3 and STATION_DOWN 19)\n";
-    int evCount50 = scenarioEventManager.processEvents(50, environment, robots, requests, scenarioLogger);
-    cout << "Events processed between t=21 and t=50: " << evCount50 << endl;
-    printTestResult("Road 3 is now BLOCKED in scenario environment", !environment.isRoadOpen(3));
-    printTestResult("Station 19 is now OFFLINE in scenario environment", !environment.isStationAvailable(19));
+cout << "\nProcessing scheduled events from the loaded scenario...\n";
 
-    cout << "\n[Step 3] Advancing to end of simulation (max_steps = " << p.maxSteps << ")\n";
-    int evCountEnd = scenarioEventManager.processEvents(p.maxSteps, environment, robots, requests, scenarioLogger);
-    cout << "Remaining events processed up to t=" << p.maxSteps << ": " << evCountEnd << endl;
-    printTestResult("All scenario events attempted", scenarioEventManager.getRemainingEventCount() == 0);
-    printTestResult("Total events in scenario logger matches successful events",
-                    scenarioLogger.getCount() == scenarioEventManager.getSuccessfulEventCount());
+int totalProcessed = 0;
 
-    
-    scenarioEventManager.displayStatistics();
+// Process events at each simulation timestep.
+// This preserves their scheduled times and file order.
+for (int time = 0; time <= p.maxSteps; time++) {
+
+    int processed = scenarioEventManager.processEvents(
+        time,
+        environment,
+        robots,
+        requests,
+        scenarioLogger
+    );
+
+    if (processed > 0) {
+        cout << "Time " << time << ": "
+             << processed << " event(s) processed\n";
+
+        totalProcessed += processed;
+    }
+}
+
+cout << "\n--- EVENT PROCESSING RESULTS ---\n";
+
+cout << "Events defined in scenario: "
+     << eventCount << "\n";
+
+cout << "Events attempted: "
+     << scenarioEventManager.getAttemptedEventCount() << "\n";
+
+cout << "Events successfully applied: "
+     << scenarioEventManager.getSuccessfulEventCount() << "\n";
+
+cout << "Events failed: "
+     << scenarioEventManager.getFailedEventCount() << "\n";
+
+cout << "Events remaining: "
+     << scenarioEventManager.getRemainingEventCount() << "\n";
+
+printTestResult(
+    "All scheduled events were attempted",
+    scenarioEventManager.getRemainingEventCount() == 0
+);
+
+printTestResult(
+    "Processed event count matches attempted event count",
+    totalProcessed == scenarioEventManager.getAttemptedEventCount()
+);
+
+printTestResult(
+    "Logger entries match successfully applied events",
+    scenarioLogger.getCount() ==
+    scenarioEventManager.getSuccessfulEventCount()
+);
+
 
     // =========================================================
     // COMPLETE SIMULATION TEST
@@ -1008,7 +1167,36 @@ int main(int argc, char* argv[]) {
     cout << "\n--- RUNNING COMPLETE SIMULATION ---\n";
 
     bool simulationResult = simulation.run();
+// Save output files using the scenario filename as the base name.
+string outputBase = filename;
 
+size_t slashPosition = outputBase.find_last_of("/\\");
+if (slashPosition != string::npos) {
+    outputBase = outputBase.substr(slashPosition + 1);
+}
+
+size_t extensionPosition = outputBase.find_last_of(".");
+if (extensionPosition != string::npos) {
+    outputBase = outputBase.substr(0, extensionPosition);
+}
+
+string logFilename = outputBase + "_logs.csv";
+string statisticsFilename = outputBase + "_statistics.txt";
+
+bool logSaved = simulationLogger.saveToFile(logFilename.c_str());
+bool statisticsSaved =
+    simulationStatistics.saveStatistics(statisticsFilename.c_str());
+
+printTestResult("Simulation log saved to file", logSaved);
+printTestResult("Simulation statistics saved to file", statisticsSaved);
+
+if (logSaved) {
+    cout << "Log file: " << logFilename << "\n";
+}
+
+if (statisticsSaved) {
+    cout << "Statistics file: " << statisticsFilename << "\n";
+}
     printTestResult(
         "Simulation run completed successfully",
         simulationResult && simulation.isFinished()
