@@ -6,10 +6,11 @@
 #include "robot.h"
 #include "rescue_request.h"
 #include "routing.h"
+#include "logger.h"
 
 // Assigns pending rescue requests to suitable robots based on priority,
 // capability, shortest route cost, and battery constraints.
 // Returns the total number of successful assignments made.
-int assignPendingRequests(const Environment& environment,RobotList& robots,RequestList& requests,int currentTime,int batteryPerCostUnit,int batteryPerWorkStep);
+int assignPendingRequests(const Environment& environment,RobotList& robots,RequestList& requests,int currentTime,int batteryPerCostUnit,int batteryPerWorkStep,Logger* logger = nullptr);
 
 #endif

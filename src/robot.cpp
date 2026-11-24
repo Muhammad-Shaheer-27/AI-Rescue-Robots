@@ -196,6 +196,7 @@ bool Robot::isValidStateTransition(int fromState, int toState, int savedState) {
             // Can start travelling, perform if already at destination, or begin charging
             return (toState == ROBOT_TRAVELLING ||
                     toState == ROBOT_PERFORMING ||
+                    toState == ROBOT_RETURNING ||
                     toState == ROBOT_RECHARGING);
 
         case ROBOT_TRAVELLING:

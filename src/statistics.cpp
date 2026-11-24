@@ -80,22 +80,12 @@ void Statistics::calculate( // Aggregates final request counts, robot totals, re
                     if (responseTime > maxResponseTime) {
                         maxResponseTime = responseTime;
                     }
+                    if (reqNode->request.durationSteps > 0) {
+                        totalWorkSteps += reqNode->request.durationSteps;
+                    }
                     break;
                 }
                 reqNode = reqNode->next;
-            }
-
-            //find the latest LOG_TASK_STARTED for this request to measure work steps
-            int startTime = -1;
-            LogEntry* scan = logger.getHead();
-            while (scan != nullptr && scan != logNode) {
-                if (scan->eventType == LOG_TASK_STARTED && scan->requestID == logNode->requestID) {
-                    startTime = scan->time;
-                }
-                scan = scan->next;
-            }
-            if (startTime != -1 && logNode->time >= startTime) {
-                totalWorkSteps += (logNode->time - startTime);
             }
         }
         logNode = logNode->next;

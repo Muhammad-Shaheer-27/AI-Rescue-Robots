@@ -26,9 +26,14 @@ private:
     bool initialized;
     bool finished;
 
+    int *trackedRequestIDs;
+    int *trackedWorkSteps;
+    int trackedCapacity;
+
     //Simulation operations
     void processScheduledEvents();
     void assignRequests();
+    void chargeForPendingRequests();
 
     void updateRobotMovement();
     void updateRobotWork();

@@ -82,9 +82,14 @@ SimulationManager::SimulationManager(){
 
     initialized=false;
     finished=false;
+
+    trackedRequestIDs=nullptr;
+    trackedWorkSteps=nullptr;
+    trackedCapacity=0;
 }
 SimulationManager::~SimulationManager(){
-
+    delete[] trackedRequestIDs;
+    delete[] trackedWorkSteps;
 }
 bool SimulationManager::initialize(Environment &env,RobotList &robots,RequestList &reqs,ScenarioLoader &loader,
     EventManager &eventMgr,Logger &log,Statistics &stats){
@@ -107,6 +112,16 @@ bool SimulationManager::initialize(Environment &env,RobotList &robots,RequestLis
             return false;
         }
         maxSteps=parameters.maxSteps;
+
+        delete[] trackedRequestIDs;
+        delete[] trackedWorkSteps;
+        trackedCapacity=reqs.getCount();
+        trackedRequestIDs=new int[trackedCapacity];
+        trackedWorkSteps=new int[trackedCapacity];
+        for(int i=0;i<trackedCapacity;i++){
+            trackedRequestIDs[i]=-1;
+            trackedWorkSteps[i]=0;
+        }
 
         currentTime=0;
         finished=false;
@@ -133,11 +148,66 @@ void SimulationManager::assignRequests(){
         const SimulationParameters &parameters=scenario->getParameters();
         //Assign suitable robots to requests
         int assignedCount=assignPendingRequests(*environment,*robot,*requests,currentTime,
-        parameters.batteryPerCostUnit,parameters.batteryPerWorkStep);
+        parameters.batteryPerCostUnit,parameters.batteryPerWorkStep,logger);
 
         if(assignedCount>0){
             cout<<"\nTime: "<<currentTime<<": "<<assignedCount<<" request(s) assigned"<<endl;
         }
+}
+void SimulationManager::chargeForPendingRequests(){
+    if(!initialized){
+        return;
+    }
+    const SimulationParameters &parameters=scenario->getParameters();
+    int locationCount=environment->getLocationCount();
+    if(locationCount<=0){
+        return;
+    }
+
+    int *routePath=new int[locationCount];
+    int *stationPath=new int[locationCount];
+    RobotNode *currentNode=robot->getHead();
+    while(currentNode!=nullptr){
+        Robot &currentRobot=currentNode->robot;
+        if(currentRobot.getState()==ROBOT_AVAILABLE && !currentRobot.isFullyCharged()){
+            bool needsChargeForRequest=false;
+            RequestNode *reqNode=requests->getHead();
+            while(reqNode!=nullptr){
+                RescueRequest &req=reqNode->request;
+                if(req.isAvailableAt(currentTime) && currentRobot.canServe(req.category)){
+                    int pathLength=0;
+                    int routeCost=0;
+                    if(findShortestPath(*environment,currentRobot.getCurrentLocation(),req.locationId,
+                        routePath,locationCount,pathLength,routeCost)){
+                        int requiredBattery=(routeCost * parameters.batteryPerCostUnit) +
+                            (req.durationSteps * parameters.batteryPerWorkStep);
+                        if(!currentRobot.hasEnoughBattery(requiredBattery)){
+                            needsChargeForRequest=true;
+                            break;
+                        }
+                    }
+                }
+                reqNode=reqNode->next;
+            }
+            if(needsChargeForRequest){
+                int nearestStationID=-1;
+                int stationRouteCost=0;
+                if(findNearestChargingStation(*environment,currentRobot.getCurrentLocation(),
+                    currentRobot.getCurrentBattery(),parameters.batteryPerCostUnit,
+                    stationPath,locationCount,nearestStationID,stationRouteCost)){
+                    if(nearestStationID==currentRobot.getCurrentLocation()){
+                        currentRobot.startRecharging(true);
+                    }
+                    else{
+                        currentRobot.setState(ROBOT_RETURNING);
+                    }
+                }
+            }
+        }
+        currentNode=currentNode->next;
+    }
+    delete[] routePath;
+    delete[] stationPath;
 }
 void SimulationManager::updateRobotMovement() {
 
@@ -210,6 +280,11 @@ void SimulationManager::updateRobotMovement() {
         bool pathFound = findShortestPath(*environment,currentLocation,destinationID,path,locationCount,
             pathLength,totalCost);
         if (!pathFound || pathLength < 2) {
+            if (currentState == ROBOT_TRAVELLING && requestID != -1) {
+                currentRobot.releaseAssignment();
+                requests->clearAssignedRobot(requestID);
+                logger->addEntry(currentTime,LOG_ROBOT_REASSIGNED,currentRobot.getId(),requestID,currentLocation);
+            }
             currentNode = currentNode->next;
             continue;
         }
@@ -333,20 +408,29 @@ void SimulationManager::updateRobotWork(){
                 logger->addEntry(currentTime,LOG_BATTERY_CONSUMED,currentRobot.getId(),requestID,
                 req->locationId,-1,batteryPerWorkStep);
             }
-            //Find the starting time of the task in the logger
-            int startTime=-1;
-            LogEntry *entry=logger->getHead();
-            while(entry!=nullptr){
-                if(entry->eventType==LOG_TASK_STARTED && entry->requestID==requestID){
-                    startTime=entry->time;
+            int trackerIndex=-1;
+            for(int i=0;i<trackedCapacity;i++){
+                if(trackedRequestIDs[i]==requestID){
+                    trackerIndex=i;
+                    break;
                 }
-                entry=entry->next;
             }
-            if(startTime==-1){
+            if(trackerIndex==-1){
+                for(int i=0;i<trackedCapacity;i++){
+                    if(trackedRequestIDs[i]==-1){
+                        trackedRequestIDs[i]=requestID;
+                        trackedWorkSteps[i]=0;
+                        trackerIndex=i;
+                        break;
+                    }
+                }
+            }
+            if(trackerIndex==-1){
                 current=current->next;
                 continue;
             }
-            int completedWorkSteps=currentTime-startTime+1;
+            trackedWorkSteps[trackerIndex]++;
+            int completedWorkSteps=trackedWorkSteps[trackerIndex];
 
             //Complete task if duration is reached
             if(completedWorkSteps>=req->durationSteps){
@@ -477,6 +561,7 @@ bool SimulationManager::step(){
     updateRobotCharging();
     //Assign pending requests
     assignRequests();
+    chargeForPendingRequests();
     //Move robots towards destinatons
     updateRobotMovement();
     //Execcute tasks

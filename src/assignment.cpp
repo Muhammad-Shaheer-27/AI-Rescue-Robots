@@ -3,7 +3,7 @@
 
 using namespace std;
 
-int assignPendingRequests(const Environment& environment,RobotList& robots,RequestList& requests,int currentTime,int batteryPerCostUnit,int batteryPerWorkStep) {
+int assignPendingRequests(const Environment& environment,RobotList& robots,RequestList& requests,int currentTime,int batteryPerCostUnit,int batteryPerWorkStep,Logger* logger) {
     int successfulAssignments = 0;
 
     int locationCount = environment.getLocationCount();
@@ -36,6 +36,7 @@ int assignPendingRequests(const Environment& environment,RobotList& robots,Reque
         Robot* bestRobot = nullptr;
         int lowestRouteCost = -1;
         int bestRobotID = -1;
+        int suitableCandidates = 0;
 
         RobotNode* rNode = robots.getHead();
         while (rNode != nullptr) {
@@ -68,6 +69,8 @@ int assignPendingRequests(const Environment& environment,RobotList& robots,Reque
                 continue;
             }
 
+            suitableCandidates++;
+
             // Tie-breaking selection rule:
             // 1. Lowest route cost
             // 2. If equal, lower robot ID
@@ -94,6 +97,12 @@ int assignPendingRequests(const Environment& environment,RobotList& robots,Reque
                 // Assign in robot second
                 if (robots.assignRobot(bestRobot->getId(), req.id)) {
                     successfulAssignments++;
+                    if (logger != nullptr) {
+                        logger->addEntry(currentTime, LOG_ROBOT_ASSIGNED, bestRobot->getId(), req.id, bestRobot->getCurrentLocation());
+                        if (suitableCandidates > 1) {
+                            logger->addEntry(currentTime, LOG_ASSIGNMENT_CONFLICT, bestRobot->getId(), req.id, bestRobot->getCurrentLocation());
+                        }
+                    }
                 } else {
                     // Rollback request assignment if robot assignment fails
                     requests.clearAssignedRobot(req.id);

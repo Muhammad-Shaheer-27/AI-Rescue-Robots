@@ -935,7 +935,7 @@ void runRobotManagerTests() {
 }
 int main(int argc, char* argv[]) {
 
-    const char* filename = "data/scenario_provided.txt";
+    const char* filename = "data/scenario_simultaneous_events.txt";
 
     if (argc > 1) {
         filename = argv[1];
