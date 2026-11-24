@@ -4,6 +4,7 @@
 #include "event_manager.h"
 #include "assignment.h"
 #include "logger.h"
+#include "simulation.h"
 
 using namespace std;
 
@@ -940,7 +941,92 @@ int main(int argc, char* argv[]) {
     printTestResult("Total events in scenario logger matches successful events",
                     scenarioLogger.getCount() == scenarioEventManager.getSuccessfulEventCount());
 
+    
     scenarioEventManager.displayStatistics();
+
+    // =========================================================
+    // COMPLETE SIMULATION TEST
+    // =========================================================
+
+    cout << "\n==========================================================\n";
+    cout << "              COMPLETE SIMULATION TEST                  \n";
+    cout << "==========================================================\n";
+
+    // Create fresh objects for the simulation.
+    // This prevents previous unit tests from affecting it.
+
+    Environment simulationEnvironment;
+    RobotList simulationRobots;
+    RequestList simulationRequests;
+    ScenarioLoader simulationLoader;
+
+    Logger simulationLogger;
+    EventManager simulationEventManager;
+    Statistics simulationStatistics;
+    SimulationManager simulation;
+
+    cout << "\nLoading a fresh scenario for simulation...\n";
+
+    if (!simulationLoader.loadEnvironment(
+            filename,
+            simulationEnvironment,
+            simulationRobots,
+            simulationRequests)) {
+
+        cout << "ERROR: Could not load scenario for simulation!\n";
+        return 1;
+    }
+
+    cout << "Scenario loaded successfully!\n";
+
+    // Initialize the SimulationManager.
+    bool initialized = simulation.initialize(
+        simulationEnvironment,
+        simulationRobots,
+        simulationRequests,
+        simulationLoader,
+        simulationEventManager,
+        simulationLogger,
+        simulationStatistics
+    );
+
+    if (!initialized) {
+        cout << "ERROR: Simulation initialization failed!\n";
+        return 1;
+    }
+
+    printTestResult(
+        "Simulation initialized successfully",
+        simulation.isInitialized()
+    );
+
+    // Display initial simulation status.
+    cout << "\n--- INITIAL SIMULATION STATUS ---\n";
+    simulation.displaySimulationStatus();
+
+    // Run the complete simulation.
+    cout << "\n--- RUNNING COMPLETE SIMULATION ---\n";
+
+    bool simulationResult = simulation.run();
+
+    printTestResult(
+        "Simulation run completed successfully",
+        simulationResult && simulation.isFinished()
+    );
+
+    // Display final simulation status.
+    cout << "\n--- FINAL SIMULATION STATUS ---\n";
+    simulation.displaySimulationStatus();
+
+    cout << "\n--- FINAL ROBOT STATISTICS ---\n";
+    simulationRobots.displayStatistics();
+
+    cout << "\n--- FINAL REQUEST STATISTICS ---\n";
+    simulationRequests.displayStatistics();
+
+    cout << "\n==========================================================\n";
+    cout << "              SIMULATION TEST COMPLETE                  \n";
+    cout << "==========================================================\n";
 
     return 0;
 }
