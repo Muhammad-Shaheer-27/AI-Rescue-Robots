@@ -68,27 +68,6 @@ int currentBattery,int batteryPerCostUnit,int path[],int pathCapacity,int &stati
 
     return true;
 }
-//============================================================
-//Helper Function:To find an open road between locations
-//============================================================
-static const Road* findOpenRoadBetween(const Environment& environment,int fromID,int toID){
-    const Road* bestRoad = nullptr;
-    for (int i = 0; i < environment.getRoadCount(); i++) {
-        const Road* road = environment.getRoadAt(i);
-        if (road == nullptr || road->status != ROAD_OPEN) {
-            continue;
-        }
-        bool connectsLocations =(road->fromLocation == fromID && road->toLocation == toID) ||
-            (road->fromLocation == toID && road->toLocation == fromID);
-        if (!connectsLocations) {
-            continue;
-        }
-        if (bestRoad == nullptr || road->cost < bestRoad->cost) {
-            bestRoad = road;
-        }
-    }
-    return bestRoad;
-}
 SimulationManager::SimulationManager(){
     environment=nullptr;
     robot=nullptr;
@@ -107,9 +86,9 @@ SimulationManager::SimulationManager(){
 SimulationManager::~SimulationManager(){
 
 }
-bool SimulationManager::initialize(Environment &env,RobotList &robots,RequestList &reqs,ScenarioLoader &loader.
+bool SimulationManager::initialize(Environment &env,RobotList &robots,RequestList &reqs,ScenarioLoader &loader,
     EventManager &eventMgr,Logger &log,Statistics &stats){
-        if(environment.Count()<=0 || robots.getCount()<=0 || requests.getCount()<=0){
+        if(env.getLocationCount()<=0 || robots.getCount()<=0 || reqs.getCount()<=0){
             return false;
         }
         //Initialize variables
@@ -119,10 +98,10 @@ bool SimulationManager::initialize(Environment &env,RobotList &robots,RequestLis
         scenario=&loader;
         manager=&eventMgr;
         logger=&log;
-        statistcs=&stats;
+        statistics=&stats;
 
         //Read simulation parameters
-        const SimulationParameters &paramters=loader.getParameters();
+        const SimulationParameters &parameters=loader.getParameters();
         if (parameters.maxSteps <= 0 || parameters.speed <= 0 || parameters.batteryPerCostUnit < 0 ||
         parameters.batteryPerWorkStep < 0 || parameters.rechargePerStep < 0) {
             return false;
@@ -145,10 +124,9 @@ void SimulationManager::processScheduledEvents(){
         return;
     }
     //Events processed in a specific timeframe
-    int processed=manager->processEvents(currenTime,*environment,*robot,*requests,*logger);
+    int processed=manager->processEvents(currentTime,*environment,*robot,*requests,*logger);
 }
-int assignRequests(const Environment& environment,RobotList& robots,RequestList& requests,
-    int currentTime,int batteryPerCostUnit,int batteryPerWorkStep){
+void SimulationManager::assignRequests(){
         if(!initialized){
             return;
         }
@@ -327,14 +305,14 @@ void SimulationManager::updateRobotWork(){
             logger->addEntry(currentTime,LOG_TASK_STARTED,currentRobot.getId(),requestID,
             req->locationId);
             cout<<"\nTime "<<currentTime<<" :Robot "<<currentRobot.getId()<<" started request"<<
-            requestId<<endl;
+            requestID<<endl;
         }
         //Execute one work per step
         if(currentRobot.getState()==ROBOT_PERFORMING){
             //Consume battery for one work per step
             if(!currentRobot.consumeBattery(batteryPerWorkStep)){
-                cout<<"\nTime "<<currentTime<<": Robot "<<currentRobot.getId()<<"ran out
-                of battery during Request "<<requestID<<endl;
+                cout<<"\nTime "<<currentTime<<": Robot "<<currentRobot.getId()<<
+                "ran out of battery during Request "<<requestID<<endl;
                 //Set status to failed
                 requests->updateStatus(requestID,REQUEST_FAILED);
                 //Record task failure
@@ -352,7 +330,7 @@ void SimulationManager::updateRobotWork(){
             }
             //Record battery consumption
             if(batteryPerWorkStep>0){
-                logger->addEntry(currentTime,LOG_BATTERY_CONSUMED,currentRobot.getId(),requestId,
+                logger->addEntry(currentTime,LOG_BATTERY_CONSUMED,currentRobot.getId(),requestID,
                 req->locationId,-1,batteryPerWorkStep);
             }
             //Find the starting time of the task in the logger
@@ -365,6 +343,7 @@ void SimulationManager::updateRobotWork(){
                 entry=entry->next;
             }
             if(startTime==-1){
+                current=current->next;
                 continue;
             }
             int completedWorkSteps=currentTime-startTime+1;
@@ -388,7 +367,7 @@ void SimulationManager::updateRobotCharging(){
     if(!initialized){
         return;
     }
-    const Simulation &parameters=scenario->getParamters();
+    const SimulationParameters &parameters=scenario->getParameters();
 
     int locationCount=environment->getLocationCount();
     if(locationCount<=0){
@@ -398,7 +377,7 @@ void SimulationManager::updateRobotCharging(){
     int *path=new int[locationCount];
     RobotNode *currentNode=robot->getHead();
     while(currentNode!=nullptr){
-        Robot &currentNode=robot->getHead();
+        Robot &currentRobot=currentNode->robot;
         int currentState=currentRobot.getState();
         int currentLocation=currentRobot.getCurrentLocation();
 
@@ -408,7 +387,7 @@ void SimulationManager::updateRobotCharging(){
             int rechargedAmount=currentRobot.stepRecharge(parameters.rechargePerStep,stationAvailable);
             
             if(rechargedAmount>0){
-                logger->addEntry(currentTime,LOG_BATTERY_RECHARGED,current.getRobotId(),-1,currentLocation,
+                logger->addEntry(currentTime,LOG_BATTERY_RECHARGED,currentRobot.getId(),-1,currentLocation,
                 -1,rechargedAmount);
             }
             currentNode=currentNode->next;
@@ -424,7 +403,7 @@ void SimulationManager::updateRobotCharging(){
                     currentRobot.setState(ROBOT_AVAILABLE);
                 }
                 else{
-                    currentRobot.setRecharging(true);
+                    currentRobot.startRecharging(true);
                 }
             }
             currentNode=currentNode->next;
@@ -446,7 +425,7 @@ void SimulationManager::updateRobotCharging(){
                 if(stationFound){
                     //Robot already present at the charging station
                     if(nearestStationID==currentLocation){
-                        currentRobot.setRecharging(true);
+                        currentRobot.startRecharging(true);
                     }
                     else{
                         currentRobot.setState(ROBOT_RETURNING);
@@ -505,7 +484,7 @@ bool SimulationManager::step(){
 
     currentTime++;
     statistics->calculate(*robot,*requests,*logger,currentTime);
-    if(shouldTerminate){
+    if(shouldTerminate()){
         finished=true;
     }
     return true;
@@ -538,28 +517,13 @@ bool SimulationManager::run(){
 int SimulationManager::getCurrentTime(){
     return currentTime;
 }
-int SimulationManger::getMaxSteps(){
+int SimulationManager::getMaxSteps(){
     return maxSteps;
 }
-bool SimulatioManager::isInitiazlied(){
+bool SimulationManager::isInitialized(){
     return initialized;
 }
 bool SimulationManager::isFinished(){
-    return finished;
-}
-int SimulationManager::getCurrentTime() {
-    return currentTime;
-}
-
-int SimulationManager::getMaxSteps() {
-    return maxSteps;
-}
-
-bool SimulationManager::isInitialized() {
-    return initialized;
-}
-
-bool SimulationManager::isFinished() {
     return finished;
 }
 

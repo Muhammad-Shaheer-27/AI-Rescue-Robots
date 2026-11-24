@@ -37,13 +37,13 @@ private:
     bool shouldTerminate() const;
 
     SimulationManager(const SimulationManager&);
-    SimulationManager &operator=(const SimulationManager&)
+    SimulationManager &operator=(const SimulationManager&);
 public:
     SimulationManager();
     ~SimulationManager();
 
     //Initialize simulation using the loaded scenario
-    bool initialize(Environment &env,RobotList &robots,RequestList &reqs,ScenarioLoader &loader.
+    bool initialize(Environment &env,RobotList &robots,RequestList &reqs,ScenarioLoader &loader,
     EventManager &eventMgr,Logger &log,Statistics &stats);
 
     //Process one step
