@@ -181,6 +181,13 @@ void SimulationManager::chargeForPendingRequests(){
                         routePath,locationCount,pathLength,routeCost)){
                         int requiredBattery=(routeCost * parameters.batteryPerCostUnit) +
                             (req.durationSteps * parameters.batteryPerWorkStep);
+                        // Include return to charger battery margin
+                        int returnStationID=-1;
+                        int returnRouteCost=0;
+                        if(parameters.batteryPerCostUnit>0 && findNearestChargingStation(*environment,req.locationId,
+                            2147483647,parameters.batteryPerCostUnit,stationPath,locationCount,returnStationID,returnRouteCost)){
+                            requiredBattery+=returnRouteCost * parameters.batteryPerCostUnit;
+                        }
                         if(!currentRobot.hasEnoughBattery(requiredBattery)){
                             needsChargeForRequest=true;
                             break;
@@ -209,6 +216,7 @@ void SimulationManager::chargeForPendingRequests(){
     delete[] routePath;
     delete[] stationPath;
 }
+
 void SimulationManager::updateRobotMovement() {
 
     if (!initialized) {

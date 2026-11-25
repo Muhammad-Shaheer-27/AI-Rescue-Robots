@@ -1,5 +1,5 @@
 ========== FINAL SIMULATION STATISTICS ==========
-Total Simulation Steps: 484
+Total Simulation Steps: 466
 Total Robots: 22
 Total Requests: 105
 Completed Requests: 105
@@ -7,12 +7,12 @@ Failed Requests: 0
 Pending Requests: 0
 Assigned Requests: 0
 In-Progress Requests: 0
-Average Response Time: 7.83
-Maximum Response Time: 28
-Robot Utilization (%): 9.98
-Total Movement Cost: 3213
-Total Battery Consumed: 4263
-Total Battery Recharged: 3355
+Average Response Time: 6.96
+Maximum Response Time: 17
+Robot Utilization (%): 9.58
+Total Movement Cost: 2642
+Total Battery Consumed: 3692
+Total Battery Recharged: 2864
 Total Reassignments: 0
-Total Conflicts: 90
+Total Conflicts: 88
 =================================================

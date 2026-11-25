@@ -2,17 +2,17 @@
 Total Simulation Steps: 250
 Total Robots: 12
 Total Requests: 55
-Completed Requests: 39
+Completed Requests: 54
 Failed Requests: 0
-Pending Requests: 16
+Pending Requests: 1
 Assigned Requests: 0
 In-Progress Requests: 0
-Average Response Time: 26.26
-Maximum Response Time: 174
-Robot Utilization (%): 13.27
-Total Movement Cost: 859
-Total Battery Consumed: 2465
-Total Battery Recharged: 2327
+Average Response Time: 20.35
+Maximum Response Time: 200
+Robot Utilization (%): 18.83
+Total Movement Cost: 1344
+Total Battery Consumed: 3720
+Total Battery Recharged: 4323
 Total Reassignments: 0
-Total Conflicts: 5
+Total Conflicts: 6
 =================================================

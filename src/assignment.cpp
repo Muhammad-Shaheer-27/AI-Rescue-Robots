@@ -3,6 +3,31 @@
 
 using namespace std;
 
+// Find nearest open charger cost
+static int findReturnChargerCost(const Environment& environment, int fromLocation, int* pathBuffer, int pathCapacity) {
+    int bestCost = -1;
+    for (int i = 0; i < environment.getLocationCount(); i++) {
+        const Location* loc = environment.getLocationAt(i);
+        if (loc == nullptr) {
+            continue;
+        }
+        if (loc->type != LOCATION_CHARGING || !environment.isStationAvailable(loc->id)) {
+            continue;
+        }
+        if (loc->id == fromLocation) {
+            return 0;
+        }
+        int pathLength = 0;
+        int totalCost = 0;
+        if (findShortestPath(environment, fromLocation, loc->id, pathBuffer, pathCapacity, pathLength, totalCost)) {
+            if (bestCost == -1 || totalCost < bestCost) {
+                bestCost = totalCost;
+            }
+        }
+    }
+    return bestCost;
+}
+
 int assignPendingRequests(const Environment& environment,RobotList& robots,RequestList& requests,int currentTime,int batteryPerCostUnit,int batteryPerWorkStep,Logger* logger) {
     int successfulAssignments = 0;
 
@@ -30,6 +55,15 @@ int assignPendingRequests(const Environment& environment,RobotList& robots,Reque
         // Only consider requests that have arrived, are pending, and unassigned
         if (!req.isAvailableAt(currentTime)) {
             continue;
+        }
+
+        // Reserve battery to reach charger
+        int returnCost = 0;
+        if (batteryPerCostUnit > 0) {
+            returnCost = findReturnChargerCost(environment, req.locationId, pathBuffer, pathCapacity);
+            if (returnCost < 0) {
+                continue;
+            }
         }
 
         // Step 2 & 4: Find the best suitable robot candidate
@@ -64,14 +98,14 @@ int assignPendingRequests(const Environment& environment,RobotList& robots,Reque
 
             // Condition 4: Sufficient battery for journey and rescue work
             // B_required = (C_route * B_cost) + (D_work * B_work)
-            int requiredBattery = (routeCost * batteryPerCostUnit) + (req.durationSteps * batteryPerWorkStep);
+            int requiredBattery = (routeCost * batteryPerCostUnit) + (req.durationSteps * batteryPerWorkStep) + (returnCost * batteryPerCostUnit);
             if (!robot.hasEnoughBattery(requiredBattery)) {
                 continue;
             }
 
             suitableCandidates++;
 
-            // Tie-breaking selection rule:
+            // Tie breaking selection rule:
             // 1. Lowest route cost
             // 2. If equal, lower robot ID
             bool isBetter = false;

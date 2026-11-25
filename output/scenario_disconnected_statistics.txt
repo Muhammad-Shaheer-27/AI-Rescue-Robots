@@ -7,12 +7,12 @@ Failed Requests: 0
 Pending Requests: 10
 Assigned Requests: 0
 In-Progress Requests: 0
-Average Response Time: 5.85
-Maximum Response Time: 23
-Robot Utilization (%): 11.67
-Total Movement Cost: 1127
-Total Battery Consumed: 1573
-Total Battery Recharged: 1269
+Average Response Time: 5.73
+Maximum Response Time: 28
+Robot Utilization (%): 11.49
+Total Movement Cost: 1110
+Total Battery Consumed: 1556
+Total Battery Recharged: 1475
 Total Reassignments: 0
-Total Conflicts: 43
+Total Conflicts: 37
 =================================================

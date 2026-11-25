@@ -7,7 +7,6 @@ A C++ Data Structures project that simulates autonomous rescue robots responding
 The simulation models locations, road connections, rescue requests, robot capabilities, battery levels, and dynamic events such as road blockages and station failures.
 
 ## Planned Features
-
 - Custom graph representation using an adjacency list.
 - Pointer-based linked lists and custom data structures.
 - Shortest-path routing using Dijkstra's algorithm.
